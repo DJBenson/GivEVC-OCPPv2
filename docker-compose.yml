@@ -1,0 +1,28 @@
+services:
+  givevc-ocppv2:
+    build:
+      context: givEVC-ocppv2
+      dockerfile: Dockerfile
+      args:
+        BUILD_FROM: python:3.11-alpine
+    image: givevc-ocppv2:local
+    container_name: givevc-ocppv2
+    restart: unless-stopped
+    ports:
+      - "${OCPP_PORT:-7655}:7655"       # OCPP WebSocket — charger connects here
+      - "${FIRMWARE_PORT:-9688}:9688"   # Firmware transfer server
+      - "${WEB_PORT:-8099}:8099"        # Web UI
+    environment:
+      OCPP_PORT: "7655"
+      FIRMWARE_PORT: "9688"
+      INGRESS_PORT: "8099"
+      ADOPT_FIRST_CHARGER: "${ADOPT_FIRST_CHARGER:-true}"
+      EXPECTED_CHARGE_POINT_ID: "${EXPECTED_CHARGE_POINT_ID:-}"
+      DEBUG_LOGGING: "${DEBUG_LOGGING:-false}"
+      FIRMWARE_ROOT: "/data/firmware"
+      FIRMWARE_MANIFEST_URL: "${FIRMWARE_MANIFEST_URL:-https://raw.githubusercontent.com/DJBenson/giv-firmware/refs/heads/main/Firmware/EVC/manifest.json}"
+    volumes:
+      - app-data:/data
+
+volumes:
+  app-data:

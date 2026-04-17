@@ -1,0 +1,3245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GivEVC — OCPP v2</title>
+<style>
+/* ─── Reset & tokens ─────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --teal:    #00bfa5;
+  --teal-dk: #009688;
+  --teal-lt: #e0f7f4;
+  --accent:  #7c4dff;
+  --warn:    #ff6b35;
+  --err:     #ef5350;
+  --ok:      #66bb6a;
+  --bg:      #f4f6f9;
+  --surface: #ffffff;
+  --border:  #e8eaf0;
+  --text:    #1a1d23;
+  --muted:   #8a909e;
+  --nav-bg:  #1a1d23;
+  --nav-w:   220px;
+  --hdr-h:   56px;
+  --radius:  12px;
+  --shadow:  0 2px 12px rgba(0,0,0,.07);
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ─── Layout shell ───────────────────────────────── */
+.shell { display: flex; min-height: 100vh; }
+
+/* ─── Sidebar nav ────────────────────────────────── */
+.nav {
+  width: var(--nav-w); background: var(--nav-bg); color: #fff;
+  display: flex; flex-direction: column; flex-shrink: 0;
+  position: fixed; top: 0; left: 0; height: 100vh; z-index: 100;
+  transition: transform .25s ease;
+}
+.nav-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.nav-brand-icon {
+  width: 32px; height: 32px; border-radius: 8px; background: var(--teal);
+  display: flex; align-items: center; justify-content: center;
+}
+.nav-brand-icon svg { width: 18px; height: 18px; fill: #fff; }
+.nav-brand-text { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
+.nav-brand-sub { font-size: 10px; color: rgba(255,255,255,.4); letter-spacing: 1px; }
+
+.nav-status {
+  margin: 12px 16px; padding: 10px 14px; border-radius: 8px;
+  background: rgba(255,255,255,.05); display: flex; align-items: center; gap: 8px;
+}
+.status-indicator {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(102,187,106,.2);
+}
+.status-indicator.offline { background: var(--err); box-shadow: 0 0 0 3px rgba(239,83,80,.2); }
+.status-text { font-size: 12px; color: rgba(255,255,255,.7); }
+.status-text strong { color: #fff; font-size: 13px; display: block; }
+
+.nav-links { flex: 1; padding: 8px 0; overflow-y: auto; }
+.nav-link {
+  display: flex; align-items: center; gap: 12px; padding: 11px 20px;
+  color: rgba(255,255,255,.55); cursor: pointer; border: none; background: none;
+  width: 100%; text-align: left; font-size: 13.5px; font-family: inherit;
+  border-left: 3px solid transparent; transition: all .15s;
+}
+.nav-link svg { width: 18px; height: 18px; flex-shrink: 0; }
+.nav-link:hover { color: rgba(255,255,255,.9); background: rgba(255,255,255,.06); }
+.nav-link.active { color: #fff; background: rgba(0,191,165,.15); border-left-color: var(--teal); }
+
+.nav-footer {
+  padding: 16px; border-top: 1px solid rgba(255,255,255,.08);
+  font-size: 11px; color: rgba(255,255,255,.3); text-align: center;
+}
+
+/* ─── Main area ──────────────────────────────────── */
+.main { margin-left: var(--nav-w); flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.header {
+  height: var(--hdr-h); background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 24px; gap: 12px;
+  position: sticky; top: 0; z-index: 50;
+}
+.header-title { font-weight: 600; font-size: 16px; flex: 1; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border);
+  background: transparent; cursor: pointer; display: flex; align-items: center;
+  justify-content: center; color: var(--muted); transition: all .15s;
+}
+.icon-btn:hover { background: var(--bg); color: var(--text); }
+.icon-btn svg { width: 16px; height: 16px; }
+
+.content { flex: 1; padding: 24px; overflow-x: hidden; }
+
+/* ─── Section / page ─────────────────────────────── */
+.section { display: none; }
+.section.active { display: block; }
+
+/* ─── Cards ──────────────────────────────────────── */
+.card {
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--shadow); border: 1px solid var(--border);
+}
+.card-header {
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-title { font-weight: 600; font-size: 14px; }
+.card-body { padding: 20px; }
+
+/* ─── Stat chips ─────────────────────────────────── */
+.stats-row {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--shadow); border: 1px solid var(--border);
+  padding: 18px 20px;
+}
+.stat-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+.stat-value { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; }
+.stat-value .unit { font-size: 13px; font-weight: 700; color: var(--teal); margin-left: 2px; }
+.stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.stat-card.teal .stat-value { color: var(--teal); }
+.stat-card.warn .stat-value { color: var(--warn); }
+.stat-card.ok .stat-value { color: var(--ok); }
+
+/* ─── General page layout ────────────────────────── */
+.general-grid {
+  display: grid; gap: 20px;
+  grid-template-columns: 1fr 1fr;
+}
+.general-grid .span2 { grid-column: span 2; }
+
+.charger-hero {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 20px; text-align: center;
+}
+.charger-hero .vehicle-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #f0f0f0; color: var(--muted); border-radius: 20px;
+  padding: 5px 14px; font-size: 12px; font-weight: 500; margin-bottom: 24px;
+}
+.charger-hero .vehicle-pill.plugged { background: var(--teal-lt); color: var(--teal-dk); }
+.charger-hero .mode-badge {
+  margin-top: 16px; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--teal-lt); color: var(--teal-dk); border-radius: 20px;
+  padding: 6px 16px; font-size: 13px; font-weight: 600;
+}
+.power-ring {
+  width: 110px; height: 110px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--teal-lt), #fff);
+  border: 3px solid var(--teal); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,191,165,.2);
+}
+.power-action-btn {
+  cursor: pointer; font-family: inherit; color: var(--teal); transition: all .15s; appearance: none; padding: 0;
+}
+.power-action-btn:hover:not(:disabled) {
+  transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,191,165,.24);
+}
+.power-action-btn:disabled {
+  cursor: not-allowed; opacity: .45; filter: grayscale(.35);
+}
+.power-action-btn.charging {
+  border-color: var(--warn); color: var(--warn); box-shadow: 0 4px 20px rgba(255,107,53,.16);
+}
+.power-action-btn.disabled-state {
+  border-color: var(--border); color: var(--muted); box-shadow: none;
+}
+.power-action-btn svg { width: 28px; height: 28px; margin-bottom: 4px; fill: currentColor; }
+.power-ring .pw-val { font-size: 22px; font-weight: 700; color: var(--teal); }
+.power-action-btn.charging .pw-val { color: var(--warn); }
+.power-action-btn.disabled-state .pw-val { color: var(--muted); }
+.power-ring .pw-unit { font-size: 11px; color: var(--muted); }
+
+.energy-stats { display: flex; flex-direction: column; gap: 16px; }
+.energy-stat-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.energy-stat-row:last-child { border-bottom: none; padding-bottom: 0; }
+.energy-stat-row .lbl { font-size: 12px; color: var(--muted); }
+.energy-stat-row .val { font-size: 20px; font-weight: 700; color: var(--teal); }
+.energy-stat-row .val .u { font-size: 12px; color: var(--teal); font-weight: 700; }
+
+/* ─── Sub-tabs (pills) ───────────────────────────── */
+.pill-tabs {
+  display: flex; gap: 4px; margin-bottom: 20px;
+  background: var(--bg); border-radius: 10px; padding: 4px;
+  width: fit-content; flex-wrap: wrap;
+}
+.pill-tab {
+  padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  cursor: pointer; border: none; background: transparent; color: var(--muted);
+  transition: all .15s; white-space: nowrap;
+}
+.pill-tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.pill-tab:hover:not(.active) { color: var(--text); }
+
+.subpage { display: none; }
+.subpage.active { display: block; }
+
+/* ─── Mode cards ─────────────────────────────────── */
+.mode-grid {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+.mode-card {
+  background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius);
+  padding: 20px; cursor: pointer; transition: all .2s; position: relative; overflow: hidden;
+}
+.mode-card:hover:not(.disabled) { border-color: var(--teal); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,191,165,.15); }
+.mode-card.active { border-color: var(--teal); background: var(--teal-lt); }
+.mode-card.active { cursor: default; }
+.mode-card.active::after {
+  content: "✓"; position: absolute; top: 12px; right: 12px;
+  width: 22px; height: 22px; border-radius: 50%; background: var(--teal);
+  color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center;
+  display: grid; place-items: center;
+}
+.mode-card.disabled:not(.active) { opacity: 0.4; cursor: not-allowed; }
+.mode-card-icon { width: 48px; height: 48px; border-radius: 12px; background: var(--bg); display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+.mode-card-icon svg { width: 26px; height: 26px; stroke: var(--muted); fill: none; stroke-width: 1.5; }
+.mode-card.active .mode-card-icon { background: rgba(0,191,165,.15); }
+.mode-card.active .mode-card-icon svg { stroke: var(--teal); }
+.mode-card-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.mode-card-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.badge-unavail {
+  display: inline-block; font-size: 9px; background: var(--bg); color: var(--muted);
+  border-radius: 4px; padding: 1px 6px; letter-spacing: .5px; font-weight: 600;
+  margin-left: 6px; vertical-align: middle;
+}
+
+/* ─── Schedule ───────────────────────────────────── */
+.schedule-layout { display: grid; gap: 20px; grid-template-columns: 280px 1fr; }
+.schedule-list-item {
+  padding: 12px 14px; border-radius: 8px; cursor: pointer; display: flex;
+  align-items: center; gap: 10px; border: 1px solid transparent; transition: all .15s;
+}
+.schedule-list-item:hover { background: var(--bg); }
+.schedule-list-item.active { background: var(--teal-lt); border-color: var(--teal); }
+.sched-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+.sched-dot.inactive { background: var(--muted); }
+.sched-name { font-weight: 600; font-size: 13px; }
+.sched-meta { font-size: 11px; color: var(--muted); }
+.schedule-empty { padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+.schedule-detail-empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+.schedule-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.schedule-form-grid .field-group.full { grid-column: 1 / -1; }
+.schedule-input, .schedule-select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: inherit; outline: none;
+}
+.schedule-input:focus, .schedule-select:focus { border-color: var(--teal); }
+.day-option {
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 18px; padding: 4px 10px; font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all .15s;
+}
+.day-option.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+.schedule-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+.schedule-status { min-height: 18px; font-size: 12px; color: var(--muted); margin-top: 12px; }
+.schedule-status.ok { color: var(--ok); }
+.schedule-status.err { color: var(--err); }
+.schedule-status.pending { color: var(--muted); }
+
+.schedule-detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: all .15s; }
+.btn-teal { background: var(--teal); color: #fff; }
+.btn-teal:hover { background: var(--teal-dk); }
+.btn-outline { background: transparent; border-color: var(--border); color: var(--text); }
+.btn-outline:hover { background: var(--bg); }
+.btn-danger { background: transparent; border-color: var(--err); color: var(--err); }
+.btn-danger:hover { background: rgba(239,83,80,.07); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-sm { padding: 5px 12px; font-size: 12px; }
+
+/* ─── App modal ─────────────────────────────────── */
+body.modal-open { overflow: hidden; }
+.app-modal-backdrop {
+  position: fixed; inset: 0; z-index: 400; display: none; align-items: center; justify-content: center;
+  background: rgba(17,19,24,.58); padding: 20px;
+}
+.app-modal-backdrop.open { display: flex; }
+.app-modal {
+  width: min(420px, 100%); background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 18px 60px rgba(0,0,0,.28);
+  padding: 20px; display: grid; gap: 16px;
+}
+.app-modal-head { display: flex; align-items: flex-start; gap: 12px; }
+.app-modal-icon {
+  width: 34px; height: 34px; border-radius: 10px; flex: 0 0 34px; display: grid; place-items: center;
+  background: var(--teal-lt); color: var(--teal); font-weight: 800; font-size: 18px;
+}
+.app-modal.warn .app-modal-icon { background: rgba(255,107,53,.12); color: var(--warn); }
+.app-modal.danger .app-modal-icon { background: rgba(239,83,80,.12); color: var(--err); }
+.app-modal-title { font-size: 16px; font-weight: 700; line-height: 1.25; margin-bottom: 6px; }
+.app-modal-message { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.app-modal-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.app-modal-actions .btn { min-width: 96px; }
+.app-modal-confirm { background: var(--teal); border-color: var(--teal); color: #fff; }
+.app-modal-confirm:hover { background: var(--teal-dk); }
+.app-modal-confirm.warn { background: var(--warn); border-color: var(--warn); }
+.app-modal-confirm.danger { background: var(--err); border-color: var(--err); }
+
+.sched-fields { display: grid; gap: 16px; }
+.field-group label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; display: block; margin-bottom: 6px; }
+.day-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.day-chip {
+  padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  background: var(--teal); color: #fff;
+}
+.day-chip.off { background: var(--bg); color: var(--muted); }
+.amp-chip { background: var(--nav-bg); color: #fff; padding: 5px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; display: inline-block; }
+
+/* ─── Tables ─────────────────────────────────────── */
+.table-toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.search-input {
+  flex: 1; min-width: 180px; padding: 8px 12px 8px 36px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; outline: none; background: var(--surface);
+  transition: border .15s;
+}
+.search-input:focus { border-color: var(--teal); }
+.search-wrap { position: relative; flex: 1; min-width: 180px; }
+.search-wrap svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; stroke: var(--muted); }
+.filter-select, .period-select {
+  padding: 8px 32px 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; background: var(--surface); color: var(--text); cursor: pointer; outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a909e'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); white-space: nowrap; }
+.data-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+.data-table tbody tr:hover { background: var(--bg); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table .empty-row td { text-align: center; color: var(--muted); padding: 40px; }
+.data-table tr.disabled-row { opacity: .58; }
+.data-table code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.sort-header {
+  display: inline-flex; align-items: center; gap: 5px; padding: 0; border: none; background: transparent;
+  color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.sort-header:hover { color: var(--text); }
+.sort-indicator { min-width: 8px; color: var(--teal); font-size: 10px; line-height: 1; }
+.log-response {
+  max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: inline-block; vertical-align: middle;
+}
+.table-wrap { overflow-x: auto; }
+.table-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; flex-wrap: wrap; gap: 8px;
+}
+.table-footer-count { font-size: 12px; color: var(--muted); }
+.dev-feature-note {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 4px 8px;
+  border-radius: 7px; background: rgba(255,107,53,.12); color: var(--warn);
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+}
+
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-ok { background: rgba(102,187,106,.15); color: #388e3c; }
+.badge-err { background: rgba(239,83,80,.12); color: var(--err); }
+.badge-warn { background: rgba(255,107,53,.12); color: var(--warn); }
+
+.pagination { display: flex; align-items: center; gap: 4px; margin-top: 16px; flex-wrap: wrap; }
+.table-footer .pagination { margin-top: 0; }
+.page-btn { width: 32px; height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 13px; color: var(--muted); display: grid; place-items: center; transition: all .15s; }
+.page-btn:hover { border-color: var(--teal); color: var(--teal); }
+.page-btn.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+.page-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ─── Settings (Other) cards ─────────────────────── */
+.settings-grid {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-auto-rows: auto;
+  align-items: stretch;
+}
+.settings-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  height: 100%; overflow: hidden; position: relative;
+}
+.settings-card h4 { font-size: 14px; font-weight: 600; }
+.settings-card p {
+  font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1;
+}
+.settings-card > .btn,
+.settings-card > .toggle-row { margin-top: 10px; }
+.settings-card .card-footer { margin-top: auto; }
+
+.settings-status { font-size: 11px; margin-top: 6px; min-height: 14px; }
+.settings-card > .settings-status {
+  position: absolute; left: 20px; right: 20px; bottom: 4px;
+  margin-top: 0; min-height: 14px; line-height: 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-status.ok  { color: var(--ok); }
+.settings-status.err { color: var(--err); }
+.settings-status.pending { color: var(--muted); }
+.toggle-row { display: flex; align-items: center; justify-content: flex-end; }
+.toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track { position: absolute; inset: 0; background: #ddd; border-radius: 24px; cursor: pointer; transition: background .2s; }
+.toggle-track::before { content: ""; position: absolute; width: 18px; height: 18px; background: #fff; border-radius: 50%; left: 3px; top: 3px; transition: transform .2s; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+.toggle input:checked ~ .toggle-track { background: var(--teal); }
+.toggle input:checked ~ .toggle-track::before { transform: translateX(20px); }
+
+.range-group { display: flex; flex-direction: column; gap: 6px; }
+.range-group input[type=range] { width: 100%; accent-color: var(--teal); }
+.range-with-toggle { display: flex; align-items: center; gap: 12px; }
+.range-with-toggle input[type=range] { flex: 1; min-width: 0; }
+.range-with-toggle input[type=range]:disabled { opacity: .45; cursor: not-allowed; }
+.range-value { font-size: 20px; font-weight: 700; color: var(--teal); }
+.range-value .unit { font-size: 14px; color: var(--teal); font-weight: 700; }
+.unit { font-size: 12px; color: var(--muted); font-weight: 500; }
+.unit-val { font-size: 13px; color: var(--teal); font-weight: 700; }
+.cp-readings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-height: 52px; }
+.cp-reading-label { font-size: 11px; color: var(--teal); font-weight: 700; margin-bottom: 6px; }
+.cp-reading-value { font-weight: 700; font-size: 18px; color: var(--teal); }
+.cp-reading-value + .unit { font-size: 13px; color: var(--teal); font-weight: 700; }
+.firmware-select {
+  width: 100%; padding: 8px 32px 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 12px; background: var(--surface); color: var(--text);
+  outline: none; appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a909e'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.inline-inputs { display: flex; gap: 10px; align-items: center; }
+.inline-inputs label { font-size: 12px; color: var(--muted); }
+.inline-inputs input[type=number] { width: 64px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; font-size: 13px; text-align: center; outline: none; }
+.inline-inputs input[type=number]:focus { border-color: var(--teal); }
+.config-badge { display: inline-block; background: var(--nav-bg); color: #fff; border-radius: 20px; padding: 3px 12px; font-size: 11px; font-weight: 500; }
+
+/* ─── Charts ─────────────────────────────────────── */
+.chart-bar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+}
+.date-nav { display: flex; align-items: center; gap: 4px; }
+.date-nav button { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; color: var(--muted); font-size: 16px; display: grid; place-items: center; transition: all .15s; }
+.date-nav button:hover { border-color: var(--teal); color: var(--teal); }
+.date-nav input[type=date] { padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--surface); color: var(--text); outline: none; cursor: pointer; }
+.date-nav input[type=date]:focus { border-color: var(--teal); }
+
+.chart-card { padding: 20px; }
+.chart-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.chart-sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+.chart-wrap { position: relative; width: 100%; }
+canvas { width: 100% !important; display: block; }
+.chart-legend { display: flex; gap: 20px; margin-top: 16px; flex-wrap: wrap; }
+.leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.leg-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.leg-dash { width: 16px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+
+/* ─── Dark mode ──────────────────────────────────── */
+.dark {
+  --bg:      #111318;
+  --surface: #1e2128;
+  --border:  #2e323c;
+  --text:    #e8eaf0;
+  --muted:   #6b7080;
+  --nav-bg:  #13151a;
+  --teal-lt: rgba(0,191,165,.12);
+  --teal-dk: #00bfa5;
+}
+.dark .data-table tbody tr:hover { background: rgba(255,255,255,.04); }
+
+
+/* ─── Hamburger ──────────────────────────────────── */
+.hamburger { display: none; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border); background: transparent; cursor: pointer; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+.hamburger span { display: block; width: 16px; height: 2px; background: var(--text); border-radius: 2px; }
+.nav-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 99; }
+
+/* ─── Responsive ─────────────────────────────────── */
+@media (max-width: 900px) {
+  :root { --nav-w: 240px; }
+  .nav { transform: translateX(-100%); }
+  .nav.open { transform: translateX(0); }
+  .nav-overlay.open { display: block; }
+  .main { margin-left: 0; }
+  .hamburger { display: flex; }
+  .general-grid { grid-template-columns: 1fr; }
+  .general-grid .span2 { grid-column: span 1; }
+  .schedule-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .content { padding: 16px; }
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  .pill-tabs { width: 100%; }
+  .pill-tab { flex: 1; text-align: center; }
+  .mode-grid { grid-template-columns: 1fr 1fr; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .app-modal-backdrop { align-items: flex-end; padding: 12px; }
+  .app-modal { border-radius: 12px; padding: 18px; }
+  .app-modal-actions { flex-direction: column-reverse; }
+  .app-modal-actions .btn { width: 100%; min-height: 42px; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Sidebar ── -->
+<nav class="nav" id="nav">
+  <div class="nav-brand">
+    <div class="nav-brand-icon">
+      <svg viewBox="0 0 24 24"><path d="M13 2L4.09 12.26a1 1 0 0 0 .83 1.62L12 13l-1 9 8.91-10.26a1 1 0 0 0-.83-1.62L12 11l1-9z"/></svg>
+    </div>
+    <div>
+      <div class="nav-brand-text">GivEVC</div>
+      <div class="nav-brand-sub">OCPP v2</div>
+    </div>
+  </div>
+
+  <div class="nav-status">
+    <div class="status-indicator" id="status-dot"></div>
+    <div class="status-text">
+      <strong id="status-text">ONLINE</strong>
+      <span id="status-serial">EV Charger</span>
+    </div>
+  </div>
+
+  <div class="nav-links">
+    <button class="nav-link active" data-page="general" onclick="showPage('general')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Overview
+    </button>
+    <button class="nav-link" data-page="settings" onclick="showPage('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M2 12H4M20 12h2"/></svg>
+      Settings
+    </button>
+    <button class="nav-link" data-page="power" onclick="showPage('power')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Power
+    </button>
+    <button class="nav-link" data-page="energy" onclick="showPage('energy')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h2l2 6 2-9 2 6 1-3h1"/></svg>
+      Energy
+    </button>
+    <button class="nav-link" data-page="errors" onclick="showPage('errors')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Errors
+      <span style="margin-left:auto;background:var(--err);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">35</span>
+    </button>
+  </div>
+
+  <div class="nav-footer">GivEVC OCPPv2 · v0.1.0</div>
+</nav>
+<div class="nav-overlay" id="nav-overlay" onclick="closeNav()"></div>
+
+<!-- ── Main ── -->
+<div class="main">
+  <header class="header">
+    <button class="hamburger" onclick="openNav()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="header-title" id="header-title">Overview</div>
+    <div class="header-actions">
+      <button class="icon-btn" onclick="toggleFullscreen()" title="Fullscreen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="content">
+
+    <!-- ══════════ OVERVIEW ══════════ -->
+    <div class="section active" id="page-general">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Status</div>
+          <div id="stat-status-val" class="stat-value" style="font-size:18px;color:var(--ok)">● Online</div>
+          <div class="stat-sub" id="stat-status-sub">EV Charger connected</div>
+        </div>
+        <div class="stat-card teal">
+          <div class="stat-label">Power Now</div>
+          <div class="stat-value"><span id="stat-power-val">—</span><span id="stat-power-unit" class="unit">kW</span></div>
+          <div class="stat-sub">Live charge power</div>
+        </div>
+        <div class="stat-card teal">
+          <div class="stat-label">Last Session</div>
+          <div class="stat-value"><span id="stat-session-val">—</span><span id="stat-session-unit" class="unit">kWh</span></div>
+          <div class="stat-sub">Previous charge</div>
+        </div>
+        <div class="stat-card teal">
+          <div class="stat-label">Today</div>
+          <div class="stat-value"><span id="stat-today-val">—</span><span id="stat-today-unit" class="unit"></span></div>
+          <div class="stat-sub">Energy used today</div>
+        </div>
+        <div class="stat-card teal">
+          <div class="stat-label">Total Energy</div>
+          <div class="stat-value"><span id="stat-total-val">—</span><span id="stat-total-unit" class="unit">kWh</span></div>
+          <div class="stat-sub">All time</div>
+        </div>
+      </div>
+
+      <div class="general-grid">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Charger Status</span>
+          </div>
+          <div class="card-body charger-hero">
+            <div class="vehicle-pill" id="vehicle-pill">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+              Vehicle Not Plugged In
+            </div>
+            <button id="charge-action-btn" class="power-ring power-action-btn" type="button" onclick="doToggleCharging(this)" aria-label="Start charging" title="Start charging" disabled>
+              <svg id="charge-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+              <div id="hero-power-val" class="pw-val">—</div>
+              <div id="hero-power-unit" class="pw-unit">kW</div>
+            </button>
+            <div id="mode-badge" class="mode-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              Grid Mode
+            </div>
+            <div id="tx-badge" class="badge badge-ok" style="margin-top:10px;display:none"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Energy Usage</span></div>
+          <div class="card-body">
+            <div class="energy-stats">
+              <div class="energy-stat-row">
+                <span id="energy-session-label" class="lbl">Last Charge Session</span>
+                <span id="energy-session" class="val">— <span class="u">kWh</span></span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Today</span>
+                <span id="energy-today" class="val">— <span class="u">kWh</span></span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">This Month</span>
+                <span id="energy-month" class="val">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Total (All Time)</span>
+                <span id="energy-total" class="val">— <span class="u">kWh</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Charger Info</span>
+            <span id="firmware-update-pill" style="display:none;font-size:11px;background:rgba(255,107,53,.12);color:var(--warn);padding:3px 10px;border-radius:20px;font-weight:600">Update Available</span>
+          </div>
+          <div class="card-body">
+            <div class="energy-stats">
+              <div class="energy-stat-row">
+                <span class="lbl">Model</span>
+                <span id="info-model" style="font-size:13px;font-weight:600">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Firmware</span>
+                <span id="info-firmware" style="font-size:13px;font-weight:600">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Serial</span>
+                <span id="info-serial" style="font-size:13px;font-weight:600">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Charge Point ID</span>
+                <span id="info-cpid" style="font-size:13px;font-weight:600">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">IP Address</span>
+                <span id="info-ip" style="font-size:13px;font-weight:600">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">OCPP Status</span>
+                <span id="info-status" style="font-size:13px;font-weight:600">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Live Readings</span></div>
+          <div class="card-body">
+            <div class="energy-stats">
+              <div class="energy-stat-row">
+                <span class="lbl">Power</span>
+                <span id="meter-power" class="val" style="color:var(--teal)">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Current</span>
+                <span id="meter-current" class="val" style="color:var(--teal)">—</span>
+              </div>
+              <div class="energy-stat-row">
+                <span class="lbl">Voltage</span>
+                <span id="meter-voltage" class="val" style="color:var(--teal)">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ SETTINGS ══════════ -->
+    <div class="section" id="page-settings">
+      <div class="pill-tabs">
+        <button class="pill-tab active" data-sub="general" onclick="showSub('general')">General</button>
+        <button class="pill-tab" data-sub="modes" onclick="showSub('modes')">Modes</button>
+        <button class="pill-tab" data-sub="schedule" onclick="showSub('schedule')">Schedule</button>
+        <button class="pill-tab" data-sub="idtags" onclick="showSub('idtags')">ID Tags</button>
+        <button class="pill-tab" data-sub="other" onclick="showSub('other')">Other</button>
+        <button class="pill-tab" data-sub="logs" onclick="showSub('logs')">Logs</button>
+      </div>
+
+      <!-- General -->
+      <div class="subpage active" id="sub-general">
+        <div class="settings-grid">
+
+          <div class="settings-card">
+            <h4>Theme</h4>
+            <p>Choose the display theme for the portal.</p>
+            <div style="margin-top:auto">
+              <select id="select-theme" class="firmware-select" onchange="setTheme(this.value)">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="system">System default</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Auto Refresh Interval</h4>
+            <p>How often (in seconds) to automatically read configuration and meter values from the charger.</p>
+            <div class="range-group">
+              <div class="range-value"><span id="refresh-interval-val">10</span><span class="unit"> s</span></div>
+              <input type="range" id="range-refresh-interval" min="1" max="60" value="10"
+                oninput="onRefreshIntervalInput(this.value)">
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Log OCPP Commands</h4>
+            <p>Record all automatic GetConfiguration and TriggerMessage MeterValues commands in the activity log. When enabled, the log will grow quickly due to periodic polling.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="toggle-log-ocpp" onchange="onLogOcppToggle(this.checked)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Modes -->
+      <div class="subpage" id="sub-modes">
+        <div id="mode-status" style="display:none;margin-bottom:16px;padding:10px 16px;border-radius:8px;font-size:13px"></div>
+        <div class="mode-grid">
+          <div class="mode-card" data-mode="SuperEco" onclick="setChargeMode('SuperEco', this)">
+            <div class="mode-card-icon">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            </div>
+            <div class="mode-card-name">Solar</div>
+            <div class="mode-card-desc">Charge using surplus solar energy only</div>
+          </div>
+          <div class="mode-card" data-mode="Eco" onclick="setChargeMode('Eco', this)">
+            <div class="mode-card-icon">
+              <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <div class="mode-card-name">Hybrid</div>
+            <div class="mode-card-desc">Blend solar and grid power for charging</div>
+          </div>
+          <div class="mode-card" data-mode="Boost" onclick="setChargeMode('Boost', this)">
+            <div class="mode-card-icon">
+              <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            </div>
+            <div class="mode-card-name">Grid</div>
+            <div class="mode-card-desc">Charge from the mains grid supply</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Schedule -->
+      <div class="subpage" id="sub-schedule">
+        <div class="schedule-layout">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Schedules</span>
+              <button id="btn-new-schedule" class="btn btn-teal btn-sm" onclick="newSchedule()">+ Add</button>
+            </div>
+            <div class="card-body" id="schedule-list" style="padding:8px"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" id="schedule-detail-title">Schedule</span>
+              <div class="schedule-actions" id="schedule-detail-actions"></div>
+            </div>
+            <div class="card-body" id="schedule-detail-body">
+              <div class="schedule-detail-empty">No schedules configured</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ID Tags -->
+      <div class="subpage" id="sub-idtags">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">ID Tags</span>
+              <button id="btn-new-idtag" class="btn btn-teal btn-sm" onclick="newIdTag()">+ Add Tag</button>
+            </div>
+            <div class="card-body" style="padding:0 0 16px">
+            <div id="idtag-form-wrap" style="display:none;padding:16px 20px 0"></div>
+            <div id="idtag-status" class="schedule-status" style="padding:0 20px"></div>
+            <div class="table-toolbar" style="padding:16px 20px 0">
+              <div class="search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input id="idtag-search" class="search-input" type="text" placeholder="Search tags…" oninput="resetIdTagPage(); renderIdTags(_state.rfid_tags || [])">
+              </div>
+              <select id="idtag-page-size" class="filter-select" aria-label="Rows per page" onchange="setIdTagPageSize(this.value)">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <div class="table-wrap" style="padding:0 4px">
+              <table class="data-table">
+                <thead><tr><th>ID Tag</th><th>Alias</th><th>Expires At</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="idtag-table-body"><tr class="empty-row"><td colspan="5">No ID tags configured</td></tr></tbody>
+              </table>
+            </div>
+            <div class="table-footer">
+              <span id="idtag-count" class="table-footer-count">0 tags</span>
+              <div id="idtag-pagination" class="pagination"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Other -->
+      <div class="subpage" id="sub-other">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+          <div id="settings-offline-banner" style="display:none;padding:10px 16px;background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.3);border-radius:8px;font-size:13px;color:var(--err);flex:1">
+            Charger is offline — settings cannot be changed.
+          </div>
+        </div>
+        <div class="settings-grid">
+
+          <div class="settings-card">
+            <h4>Unlock Charging Port</h4>
+            <p>Force the charger to disconnect. Will not work if the EV has locked the connector.</p>
+            <button id="btn-unlock" class="btn btn-teal btn-sm" style="margin-top:10px"
+              onclick="doUnlock()">Unlock Port</button>
+            <div id="unlock-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Plug and Go</h4>
+            <p>Start charging automatically as soon as the vehicle is plugged in.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="toggle-plug-go" onchange="sendPlugAndGo(this)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="plug-go-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>LED State</h4>
+            <p>Turn the charger's front panel indicator LEDs on or off.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="toggle-leds" onchange="sendConfig('FrontPanelLEDsEnabled', this.checked ? 'true' : 'false', this)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="led-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Local Modbus Control</h4>
+            <p>Allow third-party devices on the local network to control this charger via Modbus. Charger restarts on change.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="toggle-modbus" onchange="sendConfig('EnableLocalModbus', this.checked ? 'true' : 'false', this)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="modbus-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Max Charge Current</h4>
+            <p>Limit the maximum current drawn by the charger.</p>
+            <div class="range-group">
+              <div class="range-value"><span id="max-power-val">—</span><span id="max-power-unit" class="unit"> A</span></div>
+              <input type="range" id="range-current" min="6" max="32" value="6"
+                oninput="document.getElementById('max-power-val').textContent=this.value">
+            </div>
+            <button class="btn btn-teal btn-sm" style="margin-top:10px"
+              onclick="sendConfig(_state.current_limit_key || 'MaxCurrent', document.getElementById('range-current').value, this)">Apply</button>
+            <div id="current-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Max Energy Per Session</h4>
+            <p>Stop charging once this energy threshold is reached in a single session. Set to 0 to disable.</p>
+            <div class="range-group">
+              <div class="range-value"><span id="max-energy-val">—</span><span id="max-energy-unit" class="unit"> kWh</span></div>
+              <div class="range-with-toggle">
+                <input type="range" id="range-max-energy" min="0" max="100" value="0"
+                  oninput="syncMaxEnergyDisplay()">
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-max-energy" onchange="handleMaxEnergyToggle(this)">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+            </div>
+            <button class="btn btn-teal btn-sm" style="margin-top:10px"
+              onclick="sendMaxEnergyPerSession(this)">Apply</button>
+            <div id="max-energy-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>DNO Fuse Size</h4>
+            <p>Set the maximum grid import capacity permitted by the installation.</p>
+            <div class="range-group">
+              <div class="range-value"><span id="dno-val">—</span><span id="dno-unit" class="unit"> A</span></div>
+              <div class="range-with-toggle">
+                <input type="range" id="range-dno" min="0" max="100" value="60"
+                  oninput="syncDnoFuseDisplay()">
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-dno" onchange="handleDnoFuseToggle(this)">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+            </div>
+            <button class="btn btn-teal btn-sm" style="margin-top:10px"
+              onclick="sendDnoFuseSize(this)">Apply</button>
+            <div id="dno-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Suspend Timeout</h4>
+            <p>How long the charger waits once suspended before sleeping, in minutes. Set to 0 to disable.</p>
+            <div class="range-group">
+              <div class="range-value"><span id="sleep-val">—</span></div>
+              <div class="range-with-toggle">
+                <input type="range" id="range-sleep" min="0" max="720" step="1" value="60"
+                  oninput="syncSuspendTimeoutDisplay()">
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-sleep" onchange="handleSuspendTimeoutToggle(this)">
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+            </div>
+            <button class="btn btn-teal btn-sm" style="margin-top:10px"
+              onclick="sendSuspendTimeout(this)">Apply</button>
+            <div id="sleep-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>CP Voltage Range</h4>
+            <p style="flex:0 0 auto">Adjust the allowed CP voltage range for charging state 'B'. Min: 7.6–8.0 V, Max: 10.0–10.5 V.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:auto">
+              <div style="position:relative">
+                <div style="font-size:11px;color:var(--teal);font-weight:700;margin-bottom:4px">Minimum</div>
+                <div style="display:flex;align-items:center;gap:4px">
+                  <input type="number" id="cp-range-min" min="7.6" max="8.0" step="0.1" value="8.0"
+                    style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:13px;outline:none"
+                    oninput="validateCpRangeInput(this, 7.6, 8.0, 'cp-range-min-err')">
+                  <span class="unit-val">V</span>
+                </div>
+                <div id="cp-range-min-err" style="position:absolute;font-size:11px;color:var(--err);top:100%;margin-top:2px;left:0;right:0"></div>
+              </div>
+              <div style="position:relative">
+                <div style="font-size:11px;color:var(--teal);font-weight:700;margin-bottom:4px">Maximum</div>
+                <div style="display:flex;align-items:center;gap:4px">
+                  <input type="number" id="cp-range-max" min="10.0" max="10.5" step="0.1" value="10.0"
+                    style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:13px;outline:none"
+                    oninput="validateCpRangeInput(this, 10.0, 10.5, 'cp-range-max-err')">
+                  <span class="unit-val">V</span>
+                </div>
+                <div id="cp-range-max-err" style="position:absolute;font-size:11px;color:var(--err);top:100%;margin-top:2px;left:0;right:0"></div>
+              </div>
+            </div>
+            <button class="btn btn-teal btn-sm" onclick="sendCpVoltageRange(this)">Apply</button>
+            <div id="cp-range-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>CP Voltage</h4>
+            <p style="flex:0 0 auto">Reads CP voltage and duty cycle directly from the charger via a vendor command.</p>
+            <div class="cp-readings" style="margin-top:auto">
+              <div>
+                <div class="cp-reading-label">Voltage</div>
+                <span id="cp-voltage-val" class="cp-reading-value">—</span><span id="cp-voltage-unit" class="unit" style="display:none"> V</span>
+              </div>
+              <div>
+                <div class="cp-reading-label">Duty Cycle</div>
+                <span id="cp-duty-val" class="cp-reading-value">—</span><span id="cp-duty-unit" class="unit" style="display:none"> %</span>
+              </div>
+            </div>
+            <button id="btn-read-cp" class="btn btn-teal btn-sm" style="width:100%" onclick="doReadCpVoltage(this)">Read Values</button>
+            <div id="cp-read-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Randomised Delay</h4>
+            <p>Regulatory requirement: scheduled charges start after a random delay to reduce grid strain. Range: 600–1800 s.</p>
+            <div class="range-group">
+              <div class="range-value"><span id="rand-delay-val">—</span><span class="unit"> s</span></div>
+              <input type="range" id="range-rand-delay" min="600" max="1800" step="1" value="600"
+                oninput="document.getElementById('rand-delay-val').textContent=this.value">
+            </div>
+            <button class="btn btn-teal btn-sm" style="margin-top:10px"
+              onclick="sendConfig('RandomisedDelayDuration', document.getElementById('range-rand-delay').value, this)">Apply</button>
+            <div id="rand-delay-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h4>Firmware</h4>
+            <p style="flex:0 0 auto">Select a firmware version from the list to upgrade, downgrade, or reinstall. The charger will reboot automatically once the update is applied.</p>
+            <div style="margin-top:auto">
+              <div style="font-size:11px;color:var(--teal);font-weight:700;margin-bottom:6px">
+                <span id="firmware-current">—</span>
+              </div>
+              <select id="firmware-select" class="firmware-select" onchange="syncFirmwareAction()">
+                <option value="">Loading firmware…</option>
+              </select>
+            </div>
+            <button id="btn-firmware" class="btn btn-teal btn-sm" onclick="doInstallFirmware(this)">Upgrade</button>
+            <div id="firmware-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card" style="border-color:rgba(255,107,53,.3)">
+            <h4 style="color:var(--warn)">Restart Charger</h4>
+            <p>Send a soft restart command to the EV charger.</p>
+            <button id="btn-restart" class="btn btn-sm" style="background:var(--warn);color:#fff;border-color:var(--warn)"
+              onclick="doReset('Soft')">Restart</button>
+            <div id="restart-status" class="settings-status"></div>
+          </div>
+
+          <div class="settings-card" style="border-color:rgba(255,107,53,.3)">
+            <h4 style="color:var(--warn)">Factory Reset</h4>
+            <p>Resets all settings on the EV charger back to factory defaults. This cannot be undone.</p>
+            <button id="btn-factory" class="btn btn-sm" style="background:var(--warn);color:#fff;border-color:var(--warn)"
+              onclick="doReset('Hard')">Factory Reset</button>
+            <div id="factory-status" class="settings-status"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div class="subpage" id="sub-logs">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Activity Log <span id="action-log-header-count" style="font-size:12px;background:rgba(0,191,165,.12);color:var(--teal-dk);padding:2px 8px;border-radius:10px;margin-left:6px;display:none"></span></span></div>
+          <div class="card-body" style="padding:0 0 16px">
+            <div class="table-toolbar" style="padding:16px 20px 0">
+              <div class="search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input id="action-log-search" class="search-input" type="text" placeholder="Search" oninput="resetActionLogPage(); renderActionLog(_state.action_log || [])">
+              </div>
+              <select id="action-log-filter" class="filter-select" onchange="resetActionLogPage(); renderActionLog(_state.action_log || [])">
+                <option value="">All commands</option>
+              </select>
+              <select id="action-log-page-size" class="filter-select" aria-label="Rows per page" onchange="setActionLogPageSize(this.value)">
+                <option value="10">10</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="all">All</option>
+              </select>
+              <span class="dev-feature-note">Development feature - remove</span>
+              <button id="btn-clear-logs" class="btn btn-danger btn-sm" type="button" title="Development feature to be removed" onclick="clearActionLog(this)">Delete All Logs</button>
+            </div>
+            <div class="table-wrap" style="padding:0 4px">
+              <table class="data-table">
+                <thead><tr>
+                  <th><button class="sort-header" type="button" onclick="setActionLogSort('ts')">Time <span class="sort-indicator" data-sort-indicator="ts"></span></button></th>
+                  <th><button class="sort-header" type="button" onclick="setActionLogSort('user')">User <span class="sort-indicator" data-sort-indicator="user"></span></button></th>
+                  <th><button class="sort-header" type="button" onclick="setActionLogSort('action')">Action <span class="sort-indicator" data-sort-indicator="action"></span></button></th>
+                  <th><button class="sort-header" type="button" onclick="setActionLogSort('detail')">Detail <span class="sort-indicator" data-sort-indicator="detail"></span></button></th>
+                  <th><button class="sort-header" type="button" onclick="setActionLogSort('response')">Response <span class="sort-indicator" data-sort-indicator="response"></span></button></th>
+                  <th><button class="sort-header" type="button" onclick="setActionLogSort('via')">Via <span class="sort-indicator" data-sort-indicator="via"></span></button></th>
+                </tr></thead>
+                <tbody id="action-log-body">
+                  <tr class="empty-row"><td colspan="6">No activity logged</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-footer">
+              <span id="action-log-count" class="table-footer-count">0 entries</span>
+              <div id="action-log-pagination" class="pagination"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ POWER ══════════ -->
+    <div class="section" id="page-power">
+      <div class="chart-bar">
+        <div class="date-nav">
+          <button>‹</button>
+          <input type="date" value="2026-04-13">
+          <button>›</button>
+        </div>
+        <button class="icon-btn" onclick="drawCharts()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-body chart-card">
+          <div class="chart-title">Power</div>
+          <div class="chart-sub">Real-time power draw · kW / V</div>
+          <div class="chart-wrap">
+            <canvas id="power-chart" height="280"></canvas>
+          </div>
+          <div class="chart-legend">
+            <div class="leg-item"><div class="leg-dash" style="background:#ef5350"></div>Grid Power</div>
+            <div class="leg-item"><div class="leg-dash" style="background:#00bfa5"></div>EV Charge Power</div>
+            <div class="leg-item"><div class="leg-dash" style="background:#7c4dff"></div>EV Charge Voltage</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ ENERGY ══════════ -->
+    <div class="section" id="page-energy">
+      <div class="chart-bar">
+        <div class="date-nav">
+          <button>‹</button>
+          <input type="date" value="2026-04-13">
+          <button>›</button>
+        </div>
+        <select class="period-select"><option>Daily</option><option>Weekly</option><option>Monthly</option></select>
+        <button class="icon-btn" onclick="drawCharts()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-body chart-card">
+          <div class="chart-title">Charge Energy</div>
+          <div class="chart-sub">Daily energy delivered · kWh</div>
+          <div class="chart-wrap">
+            <canvas id="energy-chart" height="280"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ ERRORS ══════════ -->
+    <div class="section" id="page-errors">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Error Log <span style="font-size:12px;background:rgba(239,83,80,.12);color:var(--err);padding:2px 8px;border-radius:10px;margin-left:6px">35 events</span></span>
+        </div>
+        <div class="card-body" style="padding:0 0 16px">
+          <div class="table-toolbar" style="padding:16px 20px 0">
+            <div class="search-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input class="search-input" type="text" placeholder="Search errors…">
+            </div>
+          </div>
+          <div class="table-wrap" style="padding:0 4px">
+            <table class="data-table">
+              <thead><tr><th>Timestamp</th><th>Serial</th><th>Error Code</th><th>Description</th><th>Cleared At</th></tr></thead>
+              <tbody>
+                <tr><td>2026-04-10 14:00:55</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 14:13:23</td></tr>
+                <tr><td>2026-04-10 13:59:57</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:57</td></tr>
+                <tr><td>2026-04-10 13:59:54</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:54</td></tr>
+                <tr><td>2026-04-10 13:59:53</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:53</td></tr>
+                <tr><td>2026-04-10 13:59:50</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:50</td></tr>
+                <tr><td>2026-04-10 13:59:49</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:49</td></tr>
+                <tr><td>2026-04-10 13:59:47</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:46</td></tr>
+                <tr><td>2026-04-10 13:59:45</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:45</td></tr>
+                <tr><td>2026-04-10 13:59:43</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:43</td></tr>
+                <tr><td>2026-04-10 13:59:41</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:41</td></tr>
+                <tr><td>2026-04-10 13:59:40</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:40</td></tr>
+                <tr><td>2026-04-10 13:58:23</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:23</td></tr>
+                <tr><td>2026-04-10 13:58:21</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:58:22</td></tr>
+                <tr><td>2026-04-10 13:58:20</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:58:21</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:0 20px;flex-wrap:wrap;gap:8px">
+            <span style="font-size:12px;color:var(--muted)">1–15 of 35</span>
+            <div class="pagination">
+              <button class="page-btn" disabled>‹</button>
+              <button class="page-btn active">1</button>
+              <button class="page-btn">2</button>
+              <button class="page-btn">3</button>
+              <button class="page-btn">›</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<div id="app-modal-backdrop" class="app-modal-backdrop" aria-hidden="true">
+  <div id="app-modal" class="app-modal" role="dialog" aria-modal="true" aria-labelledby="app-modal-title" aria-describedby="app-modal-message">
+    <div class="app-modal-head">
+      <div id="app-modal-icon" class="app-modal-icon">!</div>
+      <div>
+        <div id="app-modal-title" class="app-modal-title">Confirm Action</div>
+        <div id="app-modal-message" class="app-modal-message"></div>
+      </div>
+    </div>
+    <div class="app-modal-actions">
+      <button id="app-modal-cancel" class="btn btn-outline" type="button">Cancel</button>
+      <button id="app-modal-confirm" class="btn app-modal-confirm" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// Navigation
+// ═══════════════════════════════════════════════════
+const pageNames = { general:'Overview', settings:'Settings', power:'Power', energy:'Energy', errors:'Errors' };
+const pagePaths = { general:'/', settings:'/settings', power:'/power', energy:'/energy', errors:'/errors' };
+const settingsSubPaths = { general:'/settings/general', modes:'/settings/modes', schedule:'/settings/schedule', idtags:'/settings/idtags', other:'/settings/other', logs:'/settings/logs' };
+let _modalResolve = null;
+let _modalLastFocus = null;
+
+function showAppModal(options = {}) {
+  const backdrop = document.getElementById('app-modal-backdrop');
+  const modal = document.getElementById('app-modal');
+  const titleEl = document.getElementById('app-modal-title');
+  const messageEl = document.getElementById('app-modal-message');
+  const cancelBtn = document.getElementById('app-modal-cancel');
+  const confirmBtn = document.getElementById('app-modal-confirm');
+  const iconEl = document.getElementById('app-modal-icon');
+  if (!backdrop || !modal || !titleEl || !messageEl || !cancelBtn || !confirmBtn || !iconEl) {
+    return Promise.resolve(false);
+  }
+
+  if (_modalResolve) _modalResolve(false);
+  const variant = options.variant || 'info';
+  titleEl.textContent = options.title || 'Confirm Action';
+  messageEl.textContent = options.message || '';
+  cancelBtn.textContent = options.cancelText || 'Cancel';
+  confirmBtn.textContent = options.confirmText || 'OK';
+  cancelBtn.style.display = options.showCancel === false ? 'none' : '';
+  iconEl.textContent = variant === 'danger' ? '!' : variant === 'warn' ? '!' : 'i';
+  modal.className = `app-modal ${variant}`;
+  confirmBtn.className = `btn app-modal-confirm ${variant === 'warn' || variant === 'danger' ? variant : ''}`.trim();
+
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    _modalLastFocus = document.activeElement;
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+    setTimeout(() => confirmBtn.focus(), 0);
+  });
+}
+
+function closeAppModal(result = false) {
+  const backdrop = document.getElementById('app-modal-backdrop');
+  if (!backdrop || !_modalResolve) return;
+  const resolve = _modalResolve;
+  _modalResolve = null;
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+  if (_modalLastFocus && typeof _modalLastFocus.focus === 'function') _modalLastFocus.focus();
+  _modalLastFocus = null;
+  resolve(result);
+}
+
+function appAlert(title, message, variant = 'info') {
+  return showAppModal({ title, message, variant, confirmText: 'OK', showCancel: false });
+}
+
+function appConfirm({ title, message, confirmText = 'Confirm', cancelText = 'Cancel', variant = 'warn' }) {
+  return showAppModal({ title, message, confirmText, cancelText, variant, showCancel: true });
+}
+
+document.getElementById('app-modal-confirm')?.addEventListener('click', () => closeAppModal(true));
+document.getElementById('app-modal-cancel')?.addEventListener('click', () => closeAppModal(false));
+document.getElementById('app-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'app-modal-backdrop') closeAppModal(false);
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.getElementById('app-modal-backdrop')?.classList.contains('open')) {
+    closeAppModal(false);
+  }
+});
+
+function showPage(name, options = {}) {
+  const pageName = pageNames[name] ? name : 'general';
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + pageName).classList.add('active');
+  document.querySelector(`.nav-link[data-page="${pageName}"]`)?.classList.add('active');
+  document.getElementById('header-title').textContent = pageNames[pageName] || pageName;
+  if (pageName === 'settings') {
+    activateSettingsSub(options.sub || 'general');
+  }
+  closeNav();
+  if (!options.skipPush) updateRoute(pageName, options.sub);
+  if (pageName === 'power' || pageName === 'energy') setTimeout(drawCharts, 50);
+}
+
+function showSub(name, options = {}) {
+  showPage('settings', { sub: name, skipPush: true });
+  if (!options.skipPush) updateRoute('settings', name);
+}
+
+function activateSettingsSub(name) {
+  const subName = settingsSubPaths[name] ? name : 'general';
+  const settingsPage = document.getElementById('page-settings');
+  settingsPage.querySelectorAll('.subpage').forEach(s => s.classList.remove('active'));
+  settingsPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('sub-' + subName).classList.add('active');
+  settingsPage.querySelector(`.pill-tab[data-sub="${subName}"]`)?.classList.add('active');
+}
+
+function updateRoute(page, sub) {
+  const path = page === 'settings' && sub ? settingsSubPaths[sub] : pagePaths[page];
+  if (path && window.location.pathname !== path) {
+    history.pushState({ page, sub }, '', path);
+  }
+}
+
+function routeFromPath(path) {
+  const clean = path.replace(/\/+$/, '') || '/';
+  if (clean === '/') return { page: 'general' };
+  for (const [sub, subPath] of Object.entries(settingsSubPaths)) {
+    if (clean === subPath) return { page: 'settings', sub };
+  }
+  for (const [page, pagePath] of Object.entries(pagePaths)) {
+    if (clean === pagePath) return { page };
+  }
+  return { page: 'general' };
+}
+
+function applyRoute(path = window.location.pathname, options = {}) {
+  const route = routeFromPath(path);
+  showPage(route.page, { sub: route.sub, skipPush: true });
+  if (options.replace && window.location.pathname !== (route.page === 'settings' && route.sub ? settingsSubPaths[route.sub] : pagePaths[route.page])) {
+    history.replaceState(route, '', route.page === 'settings' && route.sub ? settingsSubPaths[route.sub] : pagePaths[route.page]);
+  }
+}
+
+window.addEventListener('popstate', () => applyRoute(window.location.pathname));
+
+function openNav() {
+  document.getElementById('nav').classList.add('open');
+  document.getElementById('nav-overlay').classList.add('open');
+}
+function closeNav() {
+  document.getElementById('nav').classList.remove('open');
+  document.getElementById('nav-overlay').classList.remove('open');
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+}
+
+// ═══════════════════════════════════════════════════
+// Live state — SSE
+// ═══════════════════════════════════════════════════
+let _state = {};
+let _sseRetryMs = 2000;
+let _firmwareEntries = [];
+let _selectedScheduleId = null;
+let _scheduleEditing = false;
+let _editingIdTag = null;
+let _actionLogPage = 1;
+let _actionLogPageSize = 50;
+let _idTagPage = 1;
+let _idTagPageSize = 25;
+let _actionLogSortKey = 'ts';
+let _actionLogSortDir = 'desc';
+let _chargingTogglePending = null;
+let _chargingToggleTimeout = null;
+const CHARGE_PENDING_TIMEOUT_MS = 120000;
+const SCHEDULE_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const CHARGE_START_STATUSES = new Set(['Available', 'Preparing']);
+const CHARGE_STOP_STATUSES = new Set(['Charging', 'SuspendedEVSE', 'SuspendedEV']);
+
+function connectSSE() {
+  const es = new EventSource('/api/events');
+
+  es.onmessage = (e) => {
+    try {
+      _state = JSON.parse(e.data);
+      applyState(_state);
+      _sseRetryMs = 2000;
+    } catch(err) {
+      console.error('SSE parse error', err);
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectSSE, _sseRetryMs);
+    _sseRetryMs = Math.min(_sseRetryMs * 2, 30000);
+  };
+}
+
+// ═══════════════════════════════════════════════════
+// State → DOM binding
+// ═══════════════════════════════════════════════════
+
+function fmt(value, decimals = 2, fallback = '—') {
+  if (value == null || value === undefined) return fallback;
+  return Number(value).toFixed(decimals);
+}
+
+function fmtDt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString();
+}
+
+function fmtDuration(startIso, endIso) {
+  const s = startIso ? new Date(startIso) : null;
+  const e = endIso   ? new Date(endIso)   : new Date();
+  if (!s || isNaN(s)) return '—';
+  const mins = Math.floor((e - s) / 60000);
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function formatSuspendMinutes(value) {
+  const mins = Number(value) || 0;
+  if (mins <= 0) return 'Disabled';
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function set(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function _setEnergyVal(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = value != null
+    ? `${value} <span class="u">kWh</span>`
+    : '—';
+}
+
+function setClass(id, cls, on) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle(cls, on);
+}
+
+function applyState(s) {
+  // ── Connection status (nav + header) ─────────────
+  const online = s.connected;
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  if (dot) dot.classList.toggle('offline', !online);
+  if (txt) txt.textContent = online ? 'ONLINE' : 'OFFLINE';
+  const serial = s.charge_point_serial_number || s.charge_point_id || 'EV Charger';
+  set('status-serial', serial);
+
+  // ── Overview stat cards ───────────────────────────
+  set('stat-status-val',   online ? '● Online' : '○ Offline');
+  set('stat-status-sub',   online ? serial : 'Disconnected');
+  setClass('stat-status-val', 'stat-err', !online);
+
+  set('stat-power-val',    s.live_power_kw  != null ? fmt(s.live_power_kw, 2) : '—');
+  set('stat-power-unit',   s.live_power_kw  != null ? 'kW' : '');
+  set('stat-session-val',  s.session_energy_kwh != null ? fmt(s.session_energy_kwh, 2) : '—');
+  set('stat-session-unit', s.session_energy_kwh != null ? 'kWh' : '');
+  set('stat-total-val',    s.total_energy_kwh   != null ? fmt(s.total_energy_kwh, 2) : '—');
+  set('stat-total-unit',   s.total_energy_kwh   != null ? 'kWh' : '');
+  set('stat-today-val',    '—');
+  set('stat-today-unit',   '');
+
+  // ── Charger hero ──────────────────────────────────
+  const plugged = !!s.car_plugged_in;
+  const pill = document.getElementById('vehicle-pill');
+  if (pill) {
+    pill.textContent = plugged ? 'Vehicle Plugged In' : 'Vehicle Not Plugged In';
+    pill.classList.toggle('plugged', plugged);
+  }
+
+  set('hero-power-val',  s.live_power_kw != null ? fmt(s.live_power_kw, 2) : '—');
+  set('hero-power-unit', s.live_power_kw != null ? 'kW' : '');
+  syncChargeAction(s);
+
+  const _modeLabels = { SuperEco: 'Solar Mode', Eco: 'Hybrid Mode', Boost: 'Grid Mode' };
+  const modeBadge = document.getElementById('mode-badge');
+  if (modeBadge) {
+    const modeText = s.charge_mode ? (_modeLabels[s.charge_mode] || s.charge_mode) : (s.status || '—');
+    modeBadge.lastChild.textContent = ' ' + modeText;
+  }
+
+  // ── Energy panel ──────────────────────────────────
+  _setEnergyVal('energy-session', s.session_energy_kwh != null ? fmt(s.session_energy_kwh, 2) : null);
+  _setEnergyVal('energy-today',   null);
+  _setEnergyVal('energy-month',   null);
+  _setEnergyVal('energy-total',   s.total_energy_kwh != null ? fmt(s.total_energy_kwh, 2) : null);
+
+  // Transaction timing shown in energy panel
+  if (s.status === 'Charging') {
+    set('energy-session-label', 'Current session · ' + fmtDuration(s.transaction_started_at));
+  } else if (s.transaction_ended_at) {
+    set('energy-session-label', 'Last session · ended ' + fmtDt(s.transaction_ended_at));
+  } else {
+    set('energy-session-label', 'Last Charge Session');
+  }
+
+  // ── Charger info card (if present on overview) ────
+  set('info-model',    [s.manufacturer, s.model].filter(Boolean).join(' ') || '—');
+  set('info-firmware', s.firmware_version || '—');
+  set('info-serial',   s.charge_point_serial_number || '—');
+  set('info-cpid',     s.charge_point_id || '—');
+  set('info-ip',       s.local_ip_address || '—');
+  set('info-status',   s.status || '—');
+
+  // ── Live meter readings ───────────────────────────
+  set('meter-power',   s.live_power_kw   != null ? fmt(s.live_power_kw, 2)   + ' kW'  : '—');
+  set('meter-current', s.live_current_a  != null ? fmt(s.live_current_a, 1)  + ' A'   : '—');
+  set('meter-voltage', s.live_voltage_v  != null ? fmt(s.live_voltage_v, 1)  + ' V'   : '—');
+
+  // ── Transaction badge ─────────────────────────────
+  const txBadge = document.getElementById('tx-badge');
+  if (txBadge) {
+    const charging = s.status === 'Charging';
+    txBadge.style.display = charging ? 'inline-flex' : 'none';
+    txBadge.textContent = charging
+      ? `Charging · ${fmtDuration(s.transaction_started_at)}`
+      : '';
+  }
+
+  // ── Settings — Other tab ──────────────────────────
+  const offline = !s.connected;
+  const banner = document.getElementById('settings-offline-banner');
+  if (banner) banner.style.display = offline ? '' : 'none';
+
+  // Disable all controls when offline
+  ['toggle-plug-go','toggle-leds','toggle-modbus','range-current',
+   'range-max-energy','toggle-max-energy','range-dno','toggle-dno','range-sleep','toggle-sleep',
+   'btn-unlock','btn-restart','btn-factory','btn-read-cp',
+   'cp-range-min','cp-range-max','range-rand-delay',
+   'btn-new-schedule','btn-new-idtag',
+   'firmware-select','btn-firmware'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = offline;
+  });
+  // Apply buttons inside settings cards
+  document.querySelectorAll('#sub-other .btn-teal').forEach(b => b.disabled = offline);
+
+  // Sync toggle states from live state (only if not currently focused)
+  _syncToggle('toggle-plug-go', s.plug_and_go_enabled);
+  _syncToggle('toggle-leds', s.front_panel_leds_enabled);
+  _syncToggle('toggle-modbus', s.local_modbus_enabled);
+
+  // Sliders — only update when not actively dragging
+  _syncSlider('range-current',    'max-power-val',  s.current_limit_a,    v => String(v), v => v);
+  const maxPowerUnit = document.getElementById('max-power-unit');
+  if (maxPowerUnit) maxPowerUnit.style.display = s.current_limit_a != null ? '' : 'none';
+  _syncSlider('range-rand-delay', 'rand-delay-val', s.randomised_delay_s, v => String(v), v => v);
+  syncMaxEnergyState(s.max_energy_per_session_kwh, offline);
+  syncDnoFuseState(s.max_import_capacity_a, offline);
+  syncSuspendTimeoutState(s.suspend_timeout_s, offline);
+
+  // CP voltage live values
+  set('cp-voltage-val', s.cp_voltage_v != null ? fmt(s.cp_voltage_v, 1) : '—');
+  set('cp-duty-val',    s.cp_duty_cycle_percent != null ? fmt(s.cp_duty_cycle_percent, 1) : '—');
+  const cpVUnit = document.getElementById('cp-voltage-unit');
+  const cpDUnit = document.getElementById('cp-duty-unit');
+  if (cpVUnit) cpVUnit.style.display = s.cp_voltage_v != null ? '' : 'none';
+  if (cpDUnit) cpDUnit.style.display = s.cp_duty_cycle_percent != null ? '' : 'none';
+
+  // CP voltage range inputs — only populate when not actively focused
+  _syncNumberInput('cp-range-min', s.cp_voltage_lower_limit);
+  _syncNumberInput('cp-range-max', s.cp_voltage_upper_limit);
+
+  set('firmware-current', s.firmware_version || '—');
+  syncFirmwareAction();
+  renderSchedules(s.charging_schedule || [], offline);
+  renderIdTags(s.rfid_tags || [], offline);
+  renderActionLog(s.action_log || []);
+
+  // ── Charge mode cards ─────────────────────────────
+  document.querySelectorAll('.mode-card[data-mode]').forEach(c => {
+    const isActive = !!s.charge_mode && c.dataset.mode === s.charge_mode;
+    c.classList.toggle('active', isActive);
+    c.classList.toggle('disabled', offline || isActive);
+  });
+}
+
+function _syncToggle(id, value) {
+  const el = document.getElementById(id);
+  if (el && document.activeElement !== el && value != null) {
+    el.checked = !!value;
+  }
+}
+
+function _syncNumberInput(id, value) {
+  if (value == null) return;
+  const el = document.getElementById(id);
+  if (el && document.activeElement !== el) el.value = value;
+}
+
+function _syncSlider(sliderId, labelId, value, labelFn, valueFn) {
+  if (value == null) return;
+  const rng = document.getElementById(sliderId);
+  const lbl = document.getElementById(labelId);
+  if (rng && document.activeElement !== rng) {
+    rng.value = valueFn(value);
+    if (lbl) lbl.textContent = labelFn(valueFn(value));
+  }
+}
+
+function _chargeControlForState(s) {
+  const status = s?.status || '';
+  const transactionOpen = !!s?.transaction_open;
+  const pluggedIn = s?.car_plugged_in === true;
+  const statusCanStart = CHARGE_START_STATUSES.has(status);
+  const statusCanStop = CHARGE_STOP_STATUSES.has(status);
+  const canStop = statusCanStop || (transactionOpen && !statusCanStart);
+  const canStart = statusCanStart && pluggedIn;
+  return { status, transactionOpen, pluggedIn, statusCanStart, statusCanStop, canStart, canStop };
+}
+
+function _setChargingPending(action, state) {
+  if (_chargingToggleTimeout) clearTimeout(_chargingToggleTimeout);
+  _chargingTogglePending = {
+    action,
+    initialStatus: state?.status || '',
+    startedAt: Date.now(),
+  };
+  _chargingToggleTimeout = setTimeout(() => {
+    _chargingTogglePending = null;
+    _chargingToggleTimeout = null;
+    syncChargeAction(_state);
+  }, CHARGE_PENDING_TIMEOUT_MS);
+}
+
+function _clearChargingPending() {
+  if (_chargingToggleTimeout) clearTimeout(_chargingToggleTimeout);
+  _chargingToggleTimeout = null;
+  _chargingTogglePending = null;
+}
+
+function _resolveChargingPendingFromState(s) {
+  if (!_chargingTogglePending) return;
+  const status = s?.status || '';
+  if (status && status !== _chargingTogglePending.initialStatus) {
+    _clearChargingPending();
+  }
+}
+
+function syncChargeAction(s) {
+  const btn = document.getElementById('charge-action-btn');
+  const icon = document.getElementById('charge-action-icon');
+  if (!btn || !icon) return;
+  _resolveChargingPendingFromState(s);
+  const { status, pluggedIn, statusCanStop, statusCanStart, canStart, canStop } = _chargeControlForState(s);
+  const pending = !!_chargingTogglePending;
+  const displayCanStop = pending ? _chargingTogglePending.action === 'stop' : statusCanStop;
+  const disabled = pending || s.connected === false || (!canStart && !canStop);
+  const label = displayCanStop ? 'Stop charging' : 'Start charging';
+  btn.disabled = disabled;
+  btn.classList.toggle('charging', displayCanStop);
+  btn.classList.toggle('disabled-state', disabled);
+  const disabledLabel = pending
+    ? 'Waiting for charger status update'
+    : statusCanStart && !pluggedIn
+      ? 'Charging control disabled until a vehicle is plugged in'
+    : `Charging control disabled while OCPP status is ${status || 'unknown'}`;
+  btn.setAttribute('aria-label', disabled ? disabledLabel : label);
+  btn.title = disabled ? disabledLabel : label;
+  icon.innerHTML = displayCanStop
+    ? '<path d="M6 6h12v12H6z"/>'
+    : '<path d="M8 5v14l11-7z"/>';
+}
+
+function renderSchedules(schedules, offline = false) {
+  const listEl = document.getElementById('schedule-list');
+  if (!listEl) return;
+  const items = normaliseScheduleList(schedules);
+  if (_selectedScheduleId && !items.some(s => s.id === _selectedScheduleId)) {
+    _selectedScheduleId = null;
+  }
+  if (!_selectedScheduleId && items.length) {
+    _selectedScheduleId = (items.find(s => s.enabled) || items[0]).id;
+  }
+
+  if (!items.length) {
+    listEl.innerHTML = '<div class="schedule-empty">No schedules configured</div>';
+  } else {
+    listEl.innerHTML = items.map(schedule => `
+      <div class="schedule-list-item ${schedule.id === _selectedScheduleId ? 'active' : ''}" onclick="selectSchedule('${escapeJs(schedule.id)}')">
+        <div class="sched-dot ${schedule.enabled ? '' : 'inactive'}"></div>
+        <div>
+          <div class="sched-name">${escapeHtml(schedule.name)}</div>
+          <div class="sched-meta">${escapeHtml(scheduleMeta(schedule))}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  if (!_scheduleEditing) {
+    const selected = items.find(s => s.id === _selectedScheduleId);
+    renderScheduleDetail(selected, offline);
+  }
+}
+
+function normaliseScheduleList(schedules) {
+  return (Array.isArray(schedules) ? schedules : []).map(schedule => ({
+    id: String(schedule.id ?? ''),
+    name: schedule.name || 'Schedule',
+    enabled: !!schedule.enabled,
+    start: schedule.start || schedule.start_time || '00:00',
+    end: schedule.end || schedule.end_time || '01:00',
+    days: Array.isArray(schedule.days) && schedule.days.length ? schedule.days : [...SCHEDULE_DAYS],
+    current_a: Number(schedule.current_a || 32),
+  })).filter(schedule => schedule.id);
+}
+
+function scheduleMeta(schedule) {
+  if (!schedule.enabled) return 'Inactive';
+  return `${schedule.start}-${schedule.end} · ${schedule.days.join(' ')}`;
+}
+
+function renderScheduleDetail(schedule, offline = false) {
+  const title = document.getElementById('schedule-detail-title');
+  const actions = document.getElementById('schedule-detail-actions');
+  const body = document.getElementById('schedule-detail-body');
+  if (!title || !actions || !body) return;
+
+  if (!schedule) {
+    title.textContent = 'Schedule';
+    actions.innerHTML = '';
+    body.innerHTML = '<div class="schedule-detail-empty">No schedules configured</div>';
+    return;
+  }
+
+  const dis = offline ? ' disabled' : '';
+  title.innerHTML = `${escapeHtml(schedule.name)} ${schedule.enabled ? '<span style="font-size:11px;background:var(--teal-lt);color:var(--teal-dk);padding:2px 8px;border-radius:10px;margin-left:6px">Active</span>' : ''}`;
+  actions.innerHTML = `
+    <button class="btn btn-outline btn-sm"${dis} onclick="setScheduleEnabled('${escapeJs(schedule.id)}', ${schedule.enabled ? 'false' : 'true'})">${schedule.enabled ? 'Disable' : 'Enable'}</button>
+    <button class="btn btn-outline btn-sm"${dis} onclick="editSchedule('${escapeJs(schedule.id)}')">Edit</button>
+    <button class="btn btn-danger btn-sm"${dis} onclick="deleteSchedule('${escapeJs(schedule.id)}')">Delete</button>
+  `;
+  body.innerHTML = `
+    <div class="sched-fields">
+      <div class="field-group">
+        <label>Scheduled Time</label>
+        <div style="font-size:15px;font-weight:600">${escapeHtml(schedule.start)} -> ${escapeHtml(schedule.end)} <span style="color:var(--muted);font-size:12px;font-weight:400">${escapeHtml(scheduleDuration(schedule.start, schedule.end))}</span></div>
+      </div>
+      <div class="field-group">
+        <label>Days</label>
+        <div class="day-chips">
+          ${SCHEDULE_DAYS.map(day => `<span class="day-chip ${schedule.days.includes(day) ? '' : 'off'}">${day}</span>`).join('')}
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Charge Limit</label>
+        <span class="amp-chip">${schedule.current_a} A</span>
+      </div>
+      <div id="schedule-status" class="schedule-status"></div>
+    </div>
+  `;
+}
+
+function newSchedule() {
+  if (!_state.connected) return;
+  _scheduleEditing = true;
+  _selectedScheduleId = null;
+  renderScheduleForm({
+    id: '',
+    name: 'New schedule',
+    enabled: false,
+    start: '00:00',
+    end: '01:00',
+    days: [...SCHEDULE_DAYS],
+    current_a: defaultScheduleCurrent(),
+  });
+}
+
+function selectSchedule(id) {
+  _selectedScheduleId = String(id);
+  _scheduleEditing = false;
+  renderSchedules(_state.charging_schedule || []);
+}
+
+function editSchedule(id) {
+  const schedule = normaliseScheduleList(_state.charging_schedule || []).find(item => item.id === String(id));
+  if (!schedule) return;
+  _selectedScheduleId = schedule.id;
+  _scheduleEditing = true;
+  renderScheduleForm(schedule);
+}
+
+function renderScheduleForm(schedule) {
+  const title = document.getElementById('schedule-detail-title');
+  const actions = document.getElementById('schedule-detail-actions');
+  const body = document.getElementById('schedule-detail-body');
+  if (!title || !actions || !body) return;
+  title.textContent = schedule.id ? 'Edit Schedule' : 'New Schedule';
+  actions.innerHTML = '';
+  body.innerHTML = `
+    <div class="schedule-form-grid">
+      <div class="field-group full">
+        <label>Name</label>
+        <input id="sched-name-input" class="schedule-input" type="text" maxlength="60" value="${escapeAttr(schedule.name)}">
+      </div>
+      <div class="field-group">
+        <label>Start</label>
+        <input id="sched-start-input" class="schedule-input" type="time" value="${escapeAttr(schedule.start)}">
+      </div>
+      <div class="field-group">
+        <label>End</label>
+        <input id="sched-end-input" class="schedule-input" type="time" value="${escapeAttr(schedule.end)}">
+      </div>
+      <div class="field-group">
+        <label>Charge Limit</label>
+        <select id="sched-current-input" class="schedule-select">
+          ${scheduleCurrentOptions(schedule.current_a)}
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Enabled</label>
+        <label class="toggle" style="margin-top:5px">
+          <input type="checkbox" id="sched-enabled-input" ${schedule.enabled ? 'checked' : ''}>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="field-group full">
+        <label>Days</label>
+        <div class="day-chips" id="sched-day-inputs">
+          ${SCHEDULE_DAYS.map(day => `<button type="button" class="day-option ${schedule.days.includes(day) ? 'active' : ''}" data-day="${day}" onclick="toggleScheduleDay(this)">${day}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="schedule-actions" style="margin-top:18px">
+      <button class="btn btn-outline btn-sm" onclick="cancelScheduleEdit()">Cancel</button>
+      <button class="btn btn-teal btn-sm" onclick="saveSchedule('${escapeJs(schedule.id)}')">Save</button>
+    </div>
+    <div id="schedule-status" class="schedule-status"></div>
+  `;
+}
+
+function toggleScheduleDay(button) {
+  button.classList.toggle('active');
+}
+
+function defaultScheduleCurrent() {
+  return clampScheduleCurrent(_state.current_limit_a);
+}
+
+function clampScheduleCurrent(value) {
+  const current = Math.round(Number(value));
+  if (!Number.isFinite(current)) return 32;
+  return Math.max(6, Math.min(32, current));
+}
+
+function scheduleCurrentOptions(value) {
+  const selected = clampScheduleCurrent(value);
+  let html = '';
+  for (let amps = 6; amps <= 32; amps += 1) {
+    html += `<option value="${amps}" ${amps === selected ? 'selected' : ''}>${amps} A</option>`;
+  }
+  return html;
+}
+
+function cancelScheduleEdit() {
+  _scheduleEditing = false;
+  renderSchedules(_state.charging_schedule || []);
+}
+
+async function saveSchedule(id) {
+  const selectedDays = [...document.querySelectorAll('#sched-day-inputs .day-option.active')].map(btn => btn.dataset.day);
+  const schedule = {
+    id: id || undefined,
+    name: document.getElementById('sched-name-input')?.value || 'Schedule',
+    enabled: !!document.getElementById('sched-enabled-input')?.checked,
+    start: document.getElementById('sched-start-input')?.value || '00:00',
+    end: document.getElementById('sched-end-input')?.value || '01:00',
+    days: selectedDays.length ? selectedDays : [...SCHEDULE_DAYS],
+    current_a: Number(document.getElementById('sched-current-input')?.value || defaultScheduleCurrent()),
+  };
+  const saved = await postSchedule('/api/settings/schedules', { schedule }, 'Saving...');
+  if (!saved) return;
+  mergeSchedule(saved);
+  _selectedScheduleId = String(saved.id);
+  _scheduleEditing = false;
+  renderSchedules(_state.charging_schedule || []);
+}
+
+async function setScheduleEnabled(id, enabled) {
+  const saved = await postSchedule('/api/settings/schedules/enabled', { id, enabled }, enabled ? 'Enabling...' : 'Disabling...');
+  if (!saved) return;
+  mergeSchedule(saved);
+  renderSchedules(_state.charging_schedule || []);
+}
+
+async function deleteSchedule(id) {
+  const schedule = normaliseScheduleList(_state.charging_schedule || []).find(s => s.id === String(id));
+  const name = schedule ? schedule.name : 'this schedule';
+  const confirmed = await appConfirm({
+    title: 'Delete Schedule',
+    message: `Are you sure you want to delete "${name}"? This cannot be undone.`,
+    confirmText: 'Delete',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  setScheduleStatus('Deleting...', 'pending');
+  try {
+    const r = await fetch(`/api/settings/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _state.charging_schedule = normaliseScheduleList(_state.charging_schedule || []).filter(schedule => schedule.id !== String(id));
+    _selectedScheduleId = null;
+    _scheduleEditing = false;
+    renderSchedules(_state.charging_schedule);
+  } catch (err) {
+    setScheduleStatus(err.message || 'Failed', 'err');
+  }
+}
+
+async function postSchedule(url, body, pendingText) {
+  setScheduleStatus(pendingText, 'pending');
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    setScheduleStatus('Saved', 'ok');
+    return data;
+  } catch (err) {
+    setScheduleStatus(err.message || 'Failed', 'err');
+    return null;
+  }
+}
+
+function mergeSchedule(schedule) {
+  const incoming = normaliseScheduleList([schedule])[0];
+  if (!incoming) return;
+  const current = normaliseScheduleList(_state.charging_schedule || []);
+  const updated = current.filter(item => item.id !== incoming.id);
+  if (incoming.enabled) {
+    updated.forEach(item => item.enabled = false);
+  }
+  updated.push(incoming);
+  _state.charging_schedule = updated;
+}
+
+function setScheduleStatus(message, cls) {
+  const el = document.getElementById('schedule-status');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `schedule-status ${cls}`;
+  if (cls === 'ok') setTimeout(() => { if (el.textContent === message) el.textContent = ''; }, 3000);
+}
+
+function scheduleDuration(start, end) {
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let minutes = (eh * 60 + em) - (sh * 60 + sm);
+  if (minutes <= 0) minutes += 24 * 60;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+
+const IDTAG_MAX = 100;
+
+function renderIdTags(tags, offline = false) {
+  const tbody = document.getElementById('idtag-table-body');
+  const countEl = document.getElementById('idtag-count');
+  const pager = document.getElementById('idtag-pagination');
+  if (!tbody) return;
+
+  const query = (document.getElementById('idtag-search')?.value || '').trim().toLowerCase();
+  const filtered = normaliseIdTagList(tags).filter(tag => {
+    if (!query) return true;
+    return [tag.id_tag, tag.alias, tag.expires_at].some(value => String(value || '').toLowerCase().includes(query));
+  });
+
+  const total = filtered.length;
+  const pageSize = _idTagPageSize;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  _idTagPage = Math.max(1, Math.min(_idTagPage, totalPages));
+  const start = (_idTagPage - 1) * pageSize;
+  const pageItems = filtered.slice(start, start + pageSize);
+
+  if (countEl) countEl.textContent = `${total} tag${total === 1 ? '' : 's'}`;
+
+  if (!pageItems.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="5">${query ? 'No matching ID tags' : 'No ID tags configured'}</td></tr>`;
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+
+  const dis = offline ? ' disabled' : '';
+  tbody.innerHTML = pageItems.map(tag => `
+    <tr class="${tag.enabled ? '' : 'disabled-row'}">
+      <td><code>${escapeHtml(tag.id_tag)}</code></td>
+      <td>${tag.alias ? escapeHtml(tag.alias) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td>${tag.expires_at ? escapeHtml(tag.expires_at) : '<span style="color:var(--muted)">Never</span>'}</td>
+      <td><span class="badge ${tag.enabled ? 'badge-ok' : 'badge-warn'}">${tag.enabled ? 'Enabled' : 'Disabled'}</span></td>
+      <td>
+        <div class="schedule-actions" style="justify-content:flex-start">
+          <button class="btn btn-outline btn-sm"${dis} onclick="editIdTag('${escapeJs(tag.id_tag)}')">Edit</button>
+          <button class="btn btn-outline btn-sm"${dis} onclick="setIdTagEnabled('${escapeJs(tag.id_tag)}', ${tag.enabled ? 'false' : 'true'})">${tag.enabled ? 'Disable' : 'Enable'}</button>
+          <button class="btn btn-danger btn-sm"${dis} onclick="deleteIdTag('${escapeJs(tag.id_tag)}')">Delete</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  renderIdTagPagination(total, totalPages, pager);
+}
+
+function renderIdTagPagination(totalRows, totalPages, pager) {
+  if (!pager) return;
+  if (!totalRows || totalPages <= 1) { pager.innerHTML = ''; return; }
+  const pages = idTagPageNumbers(totalPages, _idTagPage);
+  pager.innerHTML = `
+    <button class="page-btn" type="button" onclick="setIdTagPage(${_idTagPage - 1})" ${_idTagPage <= 1 ? 'disabled' : ''}>‹</button>
+    ${pages.map(page => page === 'gap'
+      ? '<span class="page-btn" style="border-color:transparent;background:transparent;cursor:default">…</span>'
+      : `<button class="page-btn ${page === _idTagPage ? 'active' : ''}" type="button" onclick="setIdTagPage(${page})">${page}</button>`
+    ).join('')}
+    <button class="page-btn" type="button" onclick="setIdTagPage(${_idTagPage + 1})" ${_idTagPage >= totalPages ? 'disabled' : ''}>›</button>
+  `;
+}
+
+function idTagPageNumbers(totalPages, currentPage) {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, idx) => idx + 1);
+  const pages = [1];
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+  if (start > 2) pages.push('gap');
+  for (let page = start; page <= end; page++) pages.push(page);
+  if (end < totalPages - 1) pages.push('gap');
+  pages.push(totalPages);
+  return pages;
+}
+
+function resetIdTagPage() { _idTagPage = 1; }
+
+function setIdTagPage(page) {
+  _idTagPage = Math.max(1, Number(page) || 1);
+  renderIdTags(_state.rfid_tags || [], !_state.connected);
+}
+
+function setIdTagPageSize(value) {
+  _idTagPageSize = Number(value) || 25;
+  resetIdTagPage();
+  renderIdTags(_state.rfid_tags || [], !_state.connected);
+}
+
+function normaliseIdTagList(tags) {
+  return (Array.isArray(tags) ? tags : []).map(tag => ({
+    id_tag: String(tag.id_tag || tag.idTag || '').trim(),
+    alias: tag.alias || '',
+    expires_at: tag.expires_at || tag.expiresAt || '',
+    enabled: tag.enabled !== false,
+  })).filter(tag => tag.id_tag);
+}
+
+function newIdTag() {
+  if (!_state.connected) return;
+  if (normaliseIdTagList(_state.rfid_tags || []).length >= IDTAG_MAX) {
+    setIdTagStatus(`Maximum of ${IDTAG_MAX} ID tags reached`, 'err');
+    return;
+  }
+  _editingIdTag = null;
+  renderIdTagForm({ id_tag: '', alias: '', expires_at: '', enabled: true });
+}
+
+function editIdTag(idTag) {
+  const tag = normaliseIdTagList(_state.rfid_tags || []).find(item => item.id_tag === String(idTag));
+  if (!tag) return;
+  _editingIdTag = tag.id_tag;
+  renderIdTagForm(tag);
+}
+
+function renderIdTagForm(tag) {
+  const wrap = document.getElementById('idtag-form-wrap');
+  if (!wrap) return;
+  wrap.style.display = '';
+  wrap.innerHTML = `
+    <div class="schedule-form-grid">
+      <div class="field-group">
+        <label>ID Tag</label>
+        <input id="idtag-id-input" class="schedule-input" type="text" value="${escapeAttr(tag.id_tag)}" placeholder="Required">
+      </div>
+      <div class="field-group">
+        <label>Alias</label>
+        <input id="idtag-alias-input" class="schedule-input" type="text" value="${escapeAttr(tag.alias)}" placeholder="Optional">
+      </div>
+      <div class="field-group">
+        <label>Expires At</label>
+        <input id="idtag-expiry-input" class="schedule-input" type="datetime-local" value="${escapeAttr(toDatetimeLocal(tag.expires_at))}">
+      </div>
+      <div class="field-group">
+        <label>Enabled</label>
+        <label class="toggle" style="margin-top:5px">
+          <input type="checkbox" id="idtag-enabled-input" ${tag.enabled ? 'checked' : ''}>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+    <div class="schedule-actions" style="margin-top:14px">
+      <button class="btn btn-outline btn-sm" onclick="cancelIdTagEdit()">Cancel</button>
+      <button class="btn btn-teal btn-sm" onclick="saveIdTag()">Save</button>
+    </div>
+  `;
+}
+
+function cancelIdTagEdit() {
+  _editingIdTag = null;
+  const wrap = document.getElementById('idtag-form-wrap');
+  if (wrap) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+  }
+}
+
+async function saveIdTag() {
+  const idTag = (document.getElementById('idtag-id-input')?.value || '').trim();
+  if (!idTag) {
+    setIdTagStatus('ID tag is required', 'err');
+    return;
+  }
+  const idTagKey = idTag.toLowerCase();
+  const editingIdTagKey = String(_editingIdTag || '').toLowerCase();
+  const existing = normaliseIdTagList(_state.rfid_tags || []);
+  if (!_editingIdTag && existing.length >= IDTAG_MAX) {
+    setIdTagStatus(`Maximum of ${IDTAG_MAX} ID tags reached`, 'err');
+    return;
+  }
+  const duplicate = existing.some(tag => {
+    const existingIdTagKey = tag.id_tag.toLowerCase();
+    return existingIdTagKey === idTagKey && existingIdTagKey !== editingIdTagKey;
+  });
+  if (duplicate) {
+    setIdTagStatus(`ID tag already exists: ${idTag}`, 'err');
+    return;
+  }
+  const tag = {
+    original_id_tag: _editingIdTag || undefined,
+    id_tag: idTag,
+    alias: (document.getElementById('idtag-alias-input')?.value || '').trim(),
+    expires_at: fromDatetimeLocal(document.getElementById('idtag-expiry-input')?.value || ''),
+    enabled: !!document.getElementById('idtag-enabled-input')?.checked,
+  };
+  const saved = await postIdTag('/api/settings/id-tags', { tag }, 'Saving...');
+  if (!saved) return;
+  mergeIdTag(saved, _editingIdTag);
+  cancelIdTagEdit();
+  renderIdTags(_state.rfid_tags || []);
+}
+
+async function setIdTagEnabled(idTag, enabled) {
+  const saved = await postIdTag('/api/settings/id-tags/enabled', { id_tag: idTag, enabled }, enabled ? 'Enabling...' : 'Disabling...');
+  if (!saved) return;
+  mergeIdTag(saved);
+  renderIdTags(_state.rfid_tags || []);
+}
+
+async function deleteIdTag(idTag) {
+  const confirmed = await appConfirm({
+    title: 'Delete ID Tag',
+    message: `Are you sure you want to delete tag "${idTag}"? This cannot be undone.`,
+    confirmText: 'Delete',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  setIdTagStatus('Deleting...', 'pending');
+  try {
+    const r = await fetch(`/api/settings/id-tags/${encodeURIComponent(idTag)}`, { method: 'DELETE' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _state.rfid_tags = normaliseIdTagList(_state.rfid_tags || []).filter(tag => tag.id_tag !== String(idTag));
+    if (_editingIdTag === idTag) cancelIdTagEdit();
+    renderIdTags(_state.rfid_tags);
+  } catch (err) {
+    setIdTagStatus(err.message || 'Failed', 'err');
+  }
+}
+
+async function postIdTag(url, body, pendingText) {
+  setIdTagStatus(pendingText, 'pending');
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    setIdTagStatus('Saved', 'ok');
+    return data;
+  } catch (err) {
+    setIdTagStatus(err.message || 'Failed', 'err');
+    return null;
+  }
+}
+
+function mergeIdTag(tag, previousIdTag) {
+  const incoming = normaliseIdTagList([tag])[0];
+  if (!incoming) return;
+  const current = normaliseIdTagList(_state.rfid_tags || []).filter(item => {
+    return item.id_tag !== incoming.id_tag && item.id_tag !== previousIdTag;
+  });
+  current.push(incoming);
+  _state.rfid_tags = current;
+}
+
+function setIdTagStatus(message, cls) {
+  const el = document.getElementById('idtag-status');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `schedule-status ${cls}`;
+  if (cls === 'ok') setTimeout(() => { if (el.textContent === message) el.textContent = ''; }, 3000);
+}
+
+function toDatetimeLocal(value) {
+  if (!value) return '';
+  return String(value).slice(0, 16);
+}
+
+function fromDatetimeLocal(value) {
+  return value ? String(value) : '';
+}
+
+function renderActionLog(logs) {
+  const tbody = document.getElementById('action-log-body');
+  const count = document.getElementById('action-log-count');
+  const filter = document.getElementById('action-log-filter');
+  const pager = document.getElementById('action-log-pagination');
+  if (!tbody) return;
+
+  const entries = normaliseActionLog(logs);
+  syncActionLogFilter(entries);
+
+  const query = (document.getElementById('action-log-search')?.value || '').trim().toLowerCase();
+  const selectedAction = filter?.value || '';
+  const filtered = entries.filter(entry => {
+    if (selectedAction && entry.action !== selectedAction) return false;
+    if (!query) return true;
+    return [entry.user, entry.action, entry.detail, entry.via, logResponseText(entry.response)]
+      .some(value => String(value || '').toLowerCase().includes(query));
+  });
+
+  const sorted = sortActionLogEntries(filtered);
+  const pageSize = getActionLogPageSize();
+  const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(sorted.length / pageSize));
+  _actionLogPage = Math.max(1, Math.min(_actionLogPage, totalPages));
+  const start = pageSize === Infinity ? 0 : (_actionLogPage - 1) * pageSize;
+  const pageEntries = pageSize === Infinity ? sorted : sorted.slice(start, start + pageSize);
+  updateActionLogSortHeaders();
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No matching activity</td></tr>';
+  } else {
+    tbody.innerHTML = pageEntries.map(entry => `
+      <tr>
+        <td>${escapeHtml(fmtDt(entry.ts))}</td>
+        <td>${escapeHtml(entry.user)}</td>
+        <td>${escapeHtml(entry.action)}</td>
+        <td>${entry.detail ? escapeHtml(entry.detail) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td>${renderLogResponse(entry)}</td>
+        <td>${escapeHtml(entry.via)}</td>
+      </tr>
+    `).join('');
+  }
+  if (count) {
+    const suffix = filtered.length === 1 ? 'entry' : 'entries';
+    const totalSuffix = entries.length !== filtered.length ? ` (${entries.length} total)` : '';
+    count.textContent = filtered.length
+      ? `${start + 1}-${start + pageEntries.length} of ${filtered.length} ${suffix}${totalSuffix}`
+      : `0 ${suffix}${totalSuffix}`;
+  }
+  const headerCount = document.getElementById('action-log-header-count');
+  if (headerCount) {
+    const total = entries.length;
+    headerCount.textContent = `${total} ${total === 1 ? 'event' : 'events'}`;
+    headerCount.style.display = total > 0 ? '' : 'none';
+  }
+  renderActionLogPagination(sorted.length, totalPages, pageSize, pager);
+}
+
+function sortActionLogEntries(entries) {
+  const dir = _actionLogSortDir === 'asc' ? 1 : -1;
+  return [...entries].sort((a, b) => {
+    const av = actionLogSortValue(a, _actionLogSortKey);
+    const bv = actionLogSortValue(b, _actionLogSortKey);
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+    return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+  });
+}
+
+function actionLogSortValue(entry, key) {
+  if (key === 'ts') {
+    const value = Date.parse(entry.ts);
+    return Number.isNaN(value) ? 0 : value;
+  }
+  if (key === 'response') {
+    return logResponseStatus(entry.response) || logResponseText(entry.response) || (entry.success ? 'Success' : 'Failed');
+  }
+  return entry[key] || '';
+}
+
+function setActionLogSort(key) {
+  if (_actionLogSortKey === key) {
+    _actionLogSortDir = _actionLogSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _actionLogSortKey = key;
+    _actionLogSortDir = key === 'ts' ? 'desc' : 'asc';
+  }
+  resetActionLogPage();
+  renderActionLog(_state.action_log || []);
+}
+
+function updateActionLogSortHeaders() {
+  document.querySelectorAll('[data-sort-indicator]').forEach(indicator => {
+    const key = indicator.dataset.sortIndicator;
+    const active = key === _actionLogSortKey;
+    indicator.textContent = active ? (_actionLogSortDir === 'asc' ? '↑' : '↓') : '';
+    indicator.closest('button')?.setAttribute('aria-label', `${indicator.closest('button')?.textContent.trim() || 'Column'} ${active ? `sorted ${_actionLogSortDir}` : 'not sorted'}`);
+  });
+}
+
+function getActionLogPageSize() {
+  const select = document.getElementById('action-log-page-size');
+  const value = select?.value || String(_actionLogPageSize);
+  if (value === 'all') return Infinity;
+  const parsed = Number(value);
+  return [10, 50, 100].includes(parsed) ? parsed : 50;
+}
+
+function setActionLogPageSize(value) {
+  _actionLogPageSize = value === 'all' ? Infinity : Number(value) || 50;
+  resetActionLogPage();
+  renderActionLog(_state.action_log || []);
+}
+
+function resetActionLogPage() {
+  _actionLogPage = 1;
+}
+
+function setActionLogPage(page) {
+  _actionLogPage = Math.max(1, Number(page) || 1);
+  renderActionLog(_state.action_log || []);
+}
+
+function renderActionLogPagination(totalRows, totalPages, pageSize, pager) {
+  if (!pager) return;
+  if (!totalRows || pageSize === Infinity || totalPages <= 1) {
+    pager.innerHTML = '';
+    return;
+  }
+  const pages = actionLogPageNumbers(totalPages, _actionLogPage);
+  pager.innerHTML = `
+    <button class="page-btn" type="button" onclick="setActionLogPage(${_actionLogPage - 1})" ${_actionLogPage <= 1 ? 'disabled' : ''}>‹</button>
+    ${pages.map(page => page === 'gap'
+      ? '<span class="page-btn" style="border-color:transparent;background:transparent;cursor:default">…</span>'
+      : `<button class="page-btn ${page === _actionLogPage ? 'active' : ''}" type="button" onclick="setActionLogPage(${page})">${page}</button>`
+    ).join('')}
+    <button class="page-btn" type="button" onclick="setActionLogPage(${_actionLogPage + 1})" ${_actionLogPage >= totalPages ? 'disabled' : ''}>›</button>
+  `;
+}
+
+function actionLogPageNumbers(totalPages, currentPage) {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, idx) => idx + 1);
+  const pages = [1];
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+  if (start > 2) pages.push('gap');
+  for (let page = start; page <= end; page++) pages.push(page);
+  if (end < totalPages - 1) pages.push('gap');
+  pages.push(totalPages);
+  return pages;
+}
+
+async function clearActionLog(btn) {
+  const confirmed = await appConfirm({
+    title: 'Delete All Logs',
+    message: 'This development feature will permanently remove every activity log entry.',
+    confirmText: 'Delete Logs',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/settings/logs', { method: 'DELETE' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _state.action_log = [];
+    resetActionLogPage();
+    renderActionLog([]);
+  } catch (err) {
+    await appAlert('Delete Failed', err.message || 'Could not delete logs', 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function normaliseActionLog(logs) {
+  return (Array.isArray(logs) ? logs : []).map(entry => ({
+    ts: entry.ts || '',
+    user: entry.user || 'You',
+    action: entry.action || 'Action',
+    detail: entry.detail || '',
+    response: entry.response ?? 'Success',
+    success: entry.success !== false,
+    via: entry.via || 'Portal',
+  }));
+}
+
+function syncActionLogFilter(entries) {
+  const select = document.getElementById('action-log-filter');
+  if (!select) return;
+  const current = select.value;
+  const actions = [...new Set(entries.map(entry => entry.action).filter(Boolean))].sort();
+  select.innerHTML = '<option value="">All commands</option>' + actions.map(action => (
+    `<option value="${escapeAttr(action)}">${escapeHtml(action)}</option>`
+  )).join('');
+  if (actions.includes(current)) select.value = current;
+}
+
+function renderLogResponse(entry) {
+  const text = logResponseText(entry.response);
+  const status = logResponseStatus(entry.response);
+  const cls = entry.success ? 'badge-ok' : 'badge-err';
+  return `<span class="badge ${cls}">${escapeHtml(status || text || (entry.success ? 'Success' : 'Failed'))}</span>`;
+}
+
+function logResponseText(response) {
+  if (response == null) return '';
+  if (typeof response === 'string') return response;
+  if (typeof response === 'number' || typeof response === 'boolean') return String(response);
+  if (typeof response === 'object') {
+    return JSON.stringify(response);
+  }
+  return String(response);
+}
+
+function logResponseStatus(response) {
+  if (response && typeof response === 'object' && response.status) return String(response.status);
+  return '';
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/"/g, '&quot;');
+}
+
+function escapeJs(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function syncMaxEnergyState(kwh, offline = false) {
+  const toggle = document.getElementById('toggle-max-energy');
+  const slider = document.getElementById('range-max-energy');
+  if (!toggle || !slider || kwh == null) return;
+
+  const enabled = Number(kwh) > 0;
+  if (document.activeElement !== toggle && document.activeElement !== slider) {
+    toggle.checked = enabled;
+    slider.value = enabled ? Math.max(1, Math.min(100, Math.round(Number(kwh)))) : 0;
+  }
+  toggle.disabled = offline;
+  syncMaxEnergyDisplay(offline);
+}
+
+function syncMaxEnergyDisplay(offline = _state.connected === false) {
+  const toggle = document.getElementById('toggle-max-energy');
+  const slider = document.getElementById('range-max-energy');
+  const label = document.getElementById('max-energy-val');
+  const unit = document.getElementById('max-energy-unit');
+  if (!toggle || !slider) return;
+
+  const enabled = toggle.checked;
+  slider.disabled = offline || !enabled;
+  if (label) label.textContent = enabled ? slider.value : 'Off';
+  if (unit) unit.style.display = enabled ? '' : 'none';
+}
+
+async function handleMaxEnergyToggle(toggle) {
+  const slider = document.getElementById('range-max-energy');
+  if (toggle.checked && slider && Number(slider.value) <= 0) {
+    slider.value = 1;
+  }
+  if (!toggle.checked) {
+    if (slider) slider.value = 0;
+    const result = await saveMaxEnergyPerSession(0);
+    if (!result) toggle.checked = true;
+  }
+  syncMaxEnergyDisplay();
+}
+
+function syncDnoFuseState(amps, offline = false) {
+  const toggle = document.getElementById('toggle-dno');
+  const slider = document.getElementById('range-dno');
+  if (!toggle || !slider || amps == null) return;
+
+  const enabled = Number(amps) > 0;
+  if (document.activeElement !== toggle && document.activeElement !== slider) {
+    toggle.checked = enabled;
+    if (enabled) {
+      slider.value = Math.max(40, Math.min(100, Math.round(Number(amps))));
+    }
+  }
+  toggle.disabled = offline;
+  syncDnoFuseDisplay(offline);
+}
+
+function syncDnoFuseDisplay(offline = _state.connected === false) {
+  const toggle = document.getElementById('toggle-dno');
+  const slider = document.getElementById('range-dno');
+  const label = document.getElementById('dno-val');
+  const unit = document.getElementById('dno-unit');
+  if (!toggle || !slider) return;
+
+  const enabled = toggle.checked;
+  if (!enabled) slider.value = 0;
+  slider.disabled = offline || !enabled;
+  if (label) label.textContent = enabled ? slider.value : 'Disabled';
+  if (unit) unit.style.display = enabled ? '' : 'none';
+}
+
+async function handleDnoFuseToggle(toggle) {
+  const slider = document.getElementById('range-dno');
+  if (toggle.checked && slider && Number(slider.value) <= 0) {
+    slider.value = 40;
+  }
+  syncDnoFuseDisplay();
+  if (toggle.checked) return;
+
+  toggle.disabled = true;
+  const result = await sendConfig('Imax', 0, toggle);
+  const status = result?.status || 'Accepted';
+  if (!result || (status !== 'Accepted' && status !== 'RebootRequired')) {
+    toggle.checked = true;
+  }
+  syncDnoFuseDisplay();
+}
+
+function syncSuspendTimeoutState(seconds, offline = false) {
+  const toggle = document.getElementById('toggle-sleep');
+  const slider = document.getElementById('range-sleep');
+  if (!toggle || !slider || seconds == null) return;
+
+  const enabled = Number(seconds) > 0;
+  if (document.activeElement !== toggle && document.activeElement !== slider) {
+    toggle.checked = enabled;
+    if (enabled) {
+      slider.value = Math.max(1, Math.min(720, Math.round(Number(seconds) / 60)));
+    }
+  }
+  toggle.disabled = offline;
+  syncSuspendTimeoutDisplay(offline);
+}
+
+function syncSuspendTimeoutDisplay(offline = _state.connected === false) {
+  const toggle = document.getElementById('toggle-sleep');
+  const slider = document.getElementById('range-sleep');
+  const label = document.getElementById('sleep-val');
+  if (!toggle || !slider) return;
+
+  const enabled = toggle.checked;
+  if (!enabled) slider.value = 0;
+  slider.disabled = offline || !enabled;
+  if (label) label.textContent = enabled ? formatSuspendMinutes(slider.value) : 'Disabled';
+}
+
+async function handleSuspendTimeoutToggle(toggle) {
+  const slider = document.getElementById('range-sleep');
+  if (toggle.checked && slider && Number(slider.value) <= 0) {
+    slider.value = 1;
+  }
+  syncSuspendTimeoutDisplay();
+  if (toggle.checked) return;
+
+  toggle.disabled = true;
+  const result = await sendConfig('SuspevTime', 0, toggle);
+  const status = result?.status || 'Accepted';
+  if (!result || (status !== 'Accepted' && status !== 'RebootRequired')) {
+    toggle.checked = true;
+  }
+  syncSuspendTimeoutDisplay();
+}
+
+// ═══════════════════════════════════════════════════
+// Charts
+// ═══════════════════════════════════════════════════
+
+function drawCharts() {
+  drawLineChart();
+  drawBarChart();
+}
+
+function drawLineChart() {
+  const canvas = document.getElementById('power-chart');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 280 * dpr;
+  canvas.style.height = '280px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = 280;
+  const pad = { t: 20, r: 20, b: 40, l: 50 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // grid
+  ctx.strokeStyle = '#e8eaf0'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (ch / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+    ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText((4 - i) * 2, pad.l - 6, y + 4);
+  }
+
+  // x labels
+  const labels = ['00:00','02:00','04:00','06:00','08:00','10:00','12:00','14:00','16:00','18:00','20:00','22:00','24:00'];
+  ctx.fillStyle = '#8a909e'; ctx.textAlign = 'center'; ctx.font = '11px sans-serif';
+  labels.forEach((lbl, i) => {
+    const x = pad.l + (i / 12) * cw;
+    ctx.fillText(lbl, x, H - 10);
+    if (i > 0 && i < 12) {
+      ctx.strokeStyle = '#f0f0f0'; ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ch); ctx.stroke();
+    }
+  });
+
+  // "No data" placeholder
+  ctx.fillStyle = '#c8ccd6'; ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
+  ctx.fillText('No data available for this date', W / 2, pad.t + ch / 2);
+
+  // y-axis label
+  ctx.save(); ctx.translate(14, pad.t + ch / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Power (kW)', 0, 0); ctx.restore();
+}
+
+function drawBarChart() {
+  const canvas = document.getElementById('energy-chart');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 280 * dpr;
+  canvas.style.height = '280px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = 280;
+  const pad = { t: 20, r: 20, b: 40, l: 50 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // grid
+  ctx.strokeStyle = '#e8eaf0'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (ch / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+    ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText((4 - i) * 5, pad.l - 6, y + 4);
+  }
+
+  // x labels — hours
+  const labels = ['00','02','04','06','08','10','12','14','16','18','20','22'];
+  ctx.fillStyle = '#8a909e'; ctx.textAlign = 'center'; ctx.font = '11px sans-serif';
+  labels.forEach((lbl, i) => {
+    const x = pad.l + ((i + 0.5) / 12) * cw;
+    ctx.fillText(lbl + ':00', x, H - 10);
+  });
+
+  // no-data
+  ctx.fillStyle = '#c8ccd6'; ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
+  ctx.fillText('No data available for this date', W / 2, pad.t + ch / 2);
+
+  // y-axis label
+  ctx.save(); ctx.translate(14, pad.t + ch / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Energy (kWh)', 0, 0); ctx.restore();
+}
+
+window.addEventListener('resize', () => { drawCharts(); });
+
+// ═══════════════════════════════════════════════════
+// Settings — Other tab
+// ═══════════════════════════════════════════════════
+
+function _statusEl(id) { return document.getElementById(id); }
+
+function _showStatus(el, msg, cls, ms = 4000) {
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'settings-status ' + cls;
+  if (ms) setTimeout(() => { if (el.textContent === msg) { el.textContent = ''; el.className = 'settings-status'; } }, ms);
+}
+
+async function setChargeMode(mode, cardEl) {
+  if (mode === _state.charge_mode || cardEl.classList.contains('disabled')) return;
+  const statusEl = document.getElementById('mode-status');
+
+  // Optimistically mark active
+  document.querySelectorAll('.mode-card[data-mode]').forEach(c => c.classList.remove('active'));
+  cardEl.classList.add('active');
+  document.querySelectorAll('.mode-card[data-mode]').forEach(c => c.style.pointerEvents = 'none');
+
+  if (statusEl) { statusEl.style.display = ''; statusEl.className = 'settings-status pending'; statusEl.textContent = 'Switching mode…'; }
+
+  try {
+    const r = await fetch('/api/settings/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    const st = data.status || 'Accepted';
+    if (statusEl) {
+      statusEl.className = 'settings-status ' + (st === 'Rejected' ? 'err' : 'ok');
+      statusEl.textContent = st === 'Accepted' ? 'Mode applied' : st === 'RebootRequired' ? 'Mode applied — charger will restart' : st;
+      setTimeout(() => { statusEl.style.display = 'none'; }, 4000);
+    }
+  } catch (err) {
+    // Revert on failure — wait for next SSE push to restore correct state
+    if (statusEl) { statusEl.className = 'settings-status err'; statusEl.textContent = err.message || 'Failed to set mode'; }
+  } finally {
+    document.querySelectorAll('.mode-card[data-mode]').forEach(c => c.style.pointerEvents = '');
+  }
+}
+
+function validateCpRangeInput(el, min, max, errId) {
+  const v = parseFloat(el.value);
+  const errEl = document.getElementById(errId);
+  const invalid = !Number.isFinite(v) || v < min || v > max;
+  el.style.borderColor = invalid ? 'var(--err)' : '';
+  if (errEl) errEl.textContent = invalid ? `This field must be between ${min} and ${max}` : '';
+  return !invalid;
+}
+
+async function sendCpVoltageRange(btn) {
+  const statusEl = _statusEl('cp-range-status');
+  const minEl = document.getElementById('cp-range-min');
+  const maxEl = document.getElementById('cp-range-max');
+  const minOk = validateCpRangeInput(minEl, 7.6, 8.0, 'cp-range-min-err');
+  const maxOk = validateCpRangeInput(maxEl, 10.0, 10.5, 'cp-range-max-err');
+  if (!minOk || !maxOk) return;
+  const minV = parseFloat(minEl.value);
+  const maxV = parseFloat(maxEl.value);
+  // Wire values are integers (×10): 8.0V → 80
+  const minWire = Math.round(minV * 10);
+  const maxWire = Math.round(maxV * 10);
+  if (btn) btn.disabled = true;
+  _showStatus(statusEl, 'Sending…', 'pending', 0);
+  try {
+    const r1 = await fetch('/api/settings/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'ChargingStateBCPVoltageLowerLimit', value: String(minWire) }),
+    });
+    const d1 = await r1.json();
+    if (!r1.ok) throw new Error(d1.error || r1.statusText);
+    const r2 = await fetch('/api/settings/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'ChargingStateBCPVoltageHigherLimit', value: String(maxWire) }),
+    });
+    const d2 = await r2.json();
+    if (!r2.ok) throw new Error(d2.error || r2.statusText);
+    _showStatus(statusEl, 'Saved', 'ok');
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doReadCpVoltage(btn) {
+  const statusEl = _statusEl('cp-read-status');
+  if (btn) btn.disabled = true;
+  _showStatus(statusEl, 'Reading…', 'pending', 0);
+  try {
+    const r = await fetch('/api/settings/read-cp-voltage', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    if (data.status !== 'Accepted') throw new Error(data.status || 'Charger rejected request');
+    _showStatus(statusEl, 'Updated', 'ok');
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function loadFirmwareManifest() {
+  const select = document.getElementById('firmware-select');
+  const statusEl = _statusEl('firmware-status');
+  if (select) select.innerHTML = '<option value="">Loading firmware…</option>';
+  try {
+    const r = await fetch('/api/firmware/manifest');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || data.manifest_error || r.statusText);
+    _firmwareEntries = data.entries || [];
+    renderFirmwareOptions(data.selected_firmware_file);
+  } catch (err) {
+    _firmwareEntries = [];
+    renderFirmwareOptions(null);
+    _showStatus(statusEl, err.message || 'Manifest load failed', 'err', 0);
+  }
+}
+
+function renderFirmwareOptions(selectedFile) {
+  const select = document.getElementById('firmware-select');
+  if (!select) return;
+  const previous = select.value || selectedFile || '';
+  if (!_firmwareEntries.length) {
+    select.innerHTML = '<option value="">No firmware available</option>';
+    syncFirmwareAction();
+    return;
+  }
+
+  select.innerHTML = _firmwareEntries.map(entry => {
+    const label = `${entry.version || entry.filename} · ${entry.filename}`;
+    return `<option value="${escapeHtml(entry.filename)}">${escapeHtml(label)}</option>`;
+  }).join('');
+
+  const wanted = _firmwareEntries.some(e => e.filename === previous)
+    ? previous
+    : (_firmwareEntries[_firmwareEntries.length - 1]?.filename || '');
+  select.value = wanted;
+  syncFirmwareAction();
+}
+
+function syncFirmwareAction() {
+  const select = document.getElementById('firmware-select');
+  const btn = document.getElementById('btn-firmware');
+  const filename = select?.value;
+  const entry = _firmwareEntries.find(e => e.filename === filename);
+  const offline = !_state.connected;
+
+  const pill = document.getElementById('firmware-update-pill');
+  if (pill) pill.style.display = _firmwareEntries.some(e => e.action === 'Upgrade') ? '' : 'none';
+
+  if (!entry) {
+    if (btn) { btn.textContent = 'Install'; btn.disabled = true; }
+    if (select) select.disabled = offline || !_firmwareEntries.length;
+    return;
+  }
+
+  const action = firmwareAction(entry.version, _state.firmware_version);
+  if (btn) {
+    btn.textContent = action;
+    btn.disabled = offline;
+  }
+  if (select) select.disabled = offline;
+}
+
+async function doInstallFirmware(btn) {
+  const select = document.getElementById('firmware-select');
+  const statusEl = _statusEl('firmware-status');
+  const filename = select?.value;
+  if (!filename) {
+    _showStatus(statusEl, 'Select firmware first', 'err');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  _showStatus(statusEl, 'Preparing firmware…', 'pending', 0);
+  try {
+    const r = await fetch('/api/firmware/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _showStatus(statusEl, 'Update requested', 'ok');
+    await loadFirmwareManifest();
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Firmware update failed', 'err', 0);
+  } finally {
+    syncFirmwareAction();
+  }
+}
+
+function firmwareAction(targetVersion, currentVersion) {
+  const cmp = compareFirmwareVersions(targetVersion, currentVersion);
+  if (cmp < 0) return 'Downgrade';
+  if (cmp > 0) return 'Upgrade';
+  return 'Reinstall';
+}
+
+function compareFirmwareVersions(targetVersion, currentVersion) {
+  const target = firmwareVersionParts(targetVersion);
+  const current = firmwareVersionParts(currentVersion);
+  if (!target.length || !current.length) return 0;
+  const width = Math.max(target.length, current.length);
+  while (target.length < width) target.push(0);
+  while (current.length < width) current.push(0);
+  for (let i = 0; i < width; i++) {
+    if (target[i] !== current[i]) return target[i] > current[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+function firmwareVersionParts(version) {
+  if (!version) return [];
+  const tail = String(version).trim().split('_').pop();
+  return (tail.match(/\d+/g) || []).map(Number);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+async function doRefreshConfig(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const log = _logOcppEnabled() ? '?log=1' : '';
+    const r = await fetch(`/api/settings/refresh${log}`, { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+  } catch (err) {
+    await appAlert('Read Failed', 'Could not read config from charger: ' + (err.message || 'Unknown error'), 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function sendPlugAndGo(toggleEl) {
+  const statusEl = _statusEl('plug-go-status');
+  const enabled = toggleEl.checked;
+  toggleEl.disabled = true;
+  _showStatus(statusEl, 'Saving…', 'pending', 0);
+  try {
+    const r = await fetch('/api/settings/plug-and-go', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _showStatus(statusEl, enabled ? 'Enabled' : 'Disabled', 'ok');
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+    toggleEl.checked = !enabled;
+  } finally {
+    toggleEl.disabled = false;
+  }
+}
+
+async function sendConfig(key, value, triggerEl) {
+  const statusId = {
+    FrontPanelLEDsEnabled:    'led-status',
+    EnableLocalModbus:        'modbus-status',
+    MaxCurrent:               'current-status',
+    ChargeRate:               'current-status',
+    MaxEnergyOnInvalidId:     'max-energy-status',
+    Imax:                     'dno-status',
+    SuspevTime:               'sleep-status',
+    RandomisedDelayDuration:  'rand-delay-status',
+  }[key];
+  const statusEl = _statusEl(statusId);
+
+  if (triggerEl) triggerEl.disabled = true;
+  _showStatus(statusEl, 'Sending…', 'pending', 0);
+
+  try {
+    const r = await fetch('/api/settings/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    const status = data.status || 'Accepted';
+    _showStatus(statusEl,
+      status === 'Accepted'       ? 'Applied' :
+      status === 'RebootRequired' ? 'Applied — restarting charger' :
+      status === 'NotSupported'   ? 'Not supported by charger' :
+                                    status,
+      status === 'Rejected' ? 'err' : 'ok'
+    );
+    return data;
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+    // revert toggle on failure
+    if (triggerEl && triggerEl.type === 'checkbox') {
+      triggerEl.checked = !triggerEl.checked;
+    }
+    return null;
+  } finally {
+    if (triggerEl) triggerEl.disabled = false;
+  }
+}
+
+function sendSuspendTimeout(triggerEl) {
+  const toggle = document.getElementById('toggle-sleep');
+  const slider = document.getElementById('range-sleep');
+  const value = toggle?.checked ? Number(slider?.value || 0) * 60 : 0;
+  return sendConfig('SuspevTime', value, triggerEl);
+}
+
+function sendDnoFuseSize(triggerEl) {
+  const toggle = document.getElementById('toggle-dno');
+  const slider = document.getElementById('range-dno');
+  const value = toggle?.checked ? Number(slider?.value || 0) : 0;
+  return sendConfig('Imax', value, triggerEl);
+}
+
+async function saveMaxEnergyPerSession(kwh, triggerEl) {
+  const statusEl = _statusEl('max-energy-status');
+  if (triggerEl) triggerEl.disabled = true;
+  _showStatus(statusEl, 'Saving…', 'pending', 0);
+  try {
+    const r = await fetch('/api/settings/max-energy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kwh }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _showStatus(statusEl, Number(data.kwh) > 0 ? 'Saved' : 'Off', 'ok');
+    return data;
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+    return null;
+  } finally {
+    if (triggerEl) triggerEl.disabled = false;
+  }
+}
+
+function sendMaxEnergyPerSession(triggerEl) {
+  const toggle = document.getElementById('toggle-max-energy');
+  const slider = document.getElementById('range-max-energy');
+  if (!toggle?.checked) {
+    if (slider) slider.value = 0;
+    syncMaxEnergyDisplay();
+    return saveMaxEnergyPerSession(0, triggerEl);
+  }
+  return saveMaxEnergyPerSession(Number(slider?.value || 0), triggerEl);
+}
+
+async function doUnlock() {
+  const btn = document.getElementById('btn-unlock');
+  const statusEl = _statusEl('unlock-status');
+  if (btn) btn.disabled = true;
+  _showStatus(statusEl, 'Sending…', 'pending', 0);
+  try {
+    const r = await fetch('/api/settings/unlock', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _showStatus(statusEl, data.status === 'Unlocked' ? 'Port unlocked' : (data.status || 'Done'), 'ok');
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doToggleCharging(btn) {
+  if (!btn || btn.disabled) return;
+  const control = _chargeControlForState(_state);
+  const pendingAction = control.statusCanStop ? 'stop' : 'start';
+  _setChargingPending(pendingAction, _state);
+  syncChargeAction(_state);
+  let errorMessage = '';
+  try {
+    const r = await fetch('/api/charging/toggle', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    if (data.status && data.status !== 'Accepted') {
+      throw new Error(`Charger returned ${data.status}`);
+    }
+  } catch (err) {
+    errorMessage = err.message || 'Could not change charging state';
+    _clearChargingPending();
+    syncChargeAction(_state);
+  }
+  if (errorMessage) {
+    await appAlert('Charging Command Failed', errorMessage, 'danger');
+  }
+}
+
+async function doReset(type) {
+  const btnId = type === 'Hard' ? 'btn-factory' : 'btn-restart';
+  const statusId = type === 'Hard' ? 'factory-status' : 'restart-status';
+  const btn = document.getElementById(btnId);
+  const statusEl = _statusEl(statusId);
+  const confirmed = await appConfirm(type === 'Hard' ? {
+    title: 'Factory Reset Charger',
+    message: 'This will reset all charger settings to factory defaults. This cannot be undone.',
+    confirmText: 'Factory Reset',
+    variant: 'danger',
+  } : {
+    title: 'Restart Charger',
+    message: 'Send a soft restart command to the EV charger.',
+    confirmText: 'Restart',
+    variant: 'warn',
+  });
+  if (!confirmed) return;
+  if (btn) btn.disabled = true;
+  _showStatus(statusEl, 'Sending…', 'pending', 0);
+  try {
+    const r = await fetch('/api/settings/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    _showStatus(statusEl, data.status === 'Accepted' ? 'Command accepted' : (data.status || 'Done'), 'ok');
+  } catch (err) {
+    _showStatus(statusEl, err.message || 'Failed', 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// Theme (light / dark / system)
+// ═══════════════════════════════════════════════════
+const _darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+
+function _applyThemePref(pref) {
+  const dark = pref === 'dark' || (pref === 'system' && _darkMQ.matches);
+  document.documentElement.classList.toggle('dark', dark);
+}
+
+function setTheme(pref) {
+  localStorage.setItem('theme', pref);
+  _applyThemePref(pref);
+  const sel = document.getElementById('select-theme');
+  if (sel && sel.value !== pref) sel.value = pref;
+}
+
+// React to OS preference changes when in system mode
+_darkMQ.addEventListener('change', () => {
+  if ((localStorage.getItem('theme') || 'system') === 'system') _applyThemePref('system');
+});
+
+// ═══════════════════════════════════════════════════
+// Auto-refresh (config + meter values)
+// ═══════════════════════════════════════════════════
+const REFRESH_INTERVAL_KEY = 'refreshInterval';
+const LOG_OCPP_KEY = 'logOcppCommands';
+let _refreshTimer = null;
+
+function _getRefreshInterval() {
+  const v = parseInt(localStorage.getItem(REFRESH_INTERVAL_KEY), 10);
+  return Number.isFinite(v) && v >= 1 && v <= 60 ? v : 10;
+}
+
+function _logOcppEnabled() {
+  return localStorage.getItem(LOG_OCPP_KEY) === '1';
+}
+
+async function _doAutoRefresh() {
+  if (!_state.connected) return;
+  const log = _logOcppEnabled() ? '?log=1' : '';
+  try { await fetch(`/api/settings/refresh${log}`, { method: 'POST' }); } catch (_) {}
+  try { await fetch(`/api/settings/trigger-meter-values${log}`, { method: 'POST' }); } catch (_) {}
+}
+
+function _startRefreshTimer(intervalS) {
+  if (_refreshTimer) clearInterval(_refreshTimer);
+  _refreshTimer = setInterval(_doAutoRefresh, intervalS * 1000);
+}
+
+function onRefreshIntervalInput(value) {
+  const v = Math.max(1, Math.min(60, parseInt(value, 10) || 10));
+  document.getElementById('refresh-interval-val').textContent = v;
+  localStorage.setItem(REFRESH_INTERVAL_KEY, v);
+  _startRefreshTimer(v);
+}
+
+function onLogOcppToggle(checked) {
+  localStorage.setItem(LOG_OCPP_KEY, checked ? '1' : '0');
+}
+
+// ── Boot ─────────────────────────────────────────────
+(function initSettings() {
+  const theme = localStorage.getItem('theme') || 'system';
+  _applyThemePref(theme);
+
+  const interval = _getRefreshInterval();
+  const sel = document.getElementById('select-theme');
+  if (sel) sel.value = theme;
+  const rng = document.getElementById('range-refresh-interval');
+  if (rng) rng.value = interval;
+  const lbl = document.getElementById('refresh-interval-val');
+  if (lbl) lbl.textContent = interval;
+
+  const logToggle = document.getElementById('toggle-log-ocpp');
+  if (logToggle) logToggle.checked = _logOcppEnabled();
+
+  _startRefreshTimer(interval);
+})();
+
+applyRoute(window.location.pathname, { replace: true });
+connectSSE();
+loadFirmwareManifest();
+</script>
+</body>
+</html>
