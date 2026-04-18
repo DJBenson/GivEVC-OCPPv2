@@ -2617,11 +2617,17 @@ class AuthStore:
         self.seed_demo_account()
 
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 
 def _normalise_email(value: str) -> str:
     email = str(value or "").strip().lower()
-    if not _EMAIL_RE.match(email) or len(email) > 254:
+    local, _, domain = email.partition("@")
+    if (
+        not _EMAIL_RE.match(email)
+        or len(email) > 254
+        or len(local) > 64
+        or not domain
+    ):
         raise ValueError("Enter a valid email address")
     return email
 
