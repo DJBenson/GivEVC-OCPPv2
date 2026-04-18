@@ -259,6 +259,23 @@ def build_web_app(
             "smtp_from": SMTP_FROM,
         }
 
+    def _merge_live_session_into_stats(state: dict, session_stats: dict) -> dict:
+        """Add in-progress session energy to today/month totals so stats update in real time."""
+        live_kwh = state.get("session_energy_kwh") or 0.0
+        transaction_active = bool(state.get("transaction_active") or state.get("transaction_id"))
+        if not transaction_active or live_kwh <= 0:
+            return session_stats
+        merged = dict(session_stats)
+        if merged.get("today_kwh") is not None:
+            merged["today_kwh"] = round(merged["today_kwh"] + live_kwh, 3)
+        else:
+            merged["today_kwh"] = round(live_kwh, 3)
+        if merged.get("month_kwh") is not None:
+            merged["month_kwh"] = round(merged["month_kwh"] + live_kwh, 3)
+        else:
+            merged["month_kwh"] = round(live_kwh, 3)
+        return merged
+
     def _state_for_user(user: AuthUser) -> dict:
         active = _active_charger_for_user(user.id)
         if active is None:
@@ -275,7 +292,7 @@ def build_web_app(
                 snapshot = coordinator.charger_snapshot_for(selected_charge_point_id)
                 if snapshot:
                     state.update(snapshot)
-                state.update(session_stats)
+                state.update(_merge_live_session_into_stats(state, session_stats))
                 return _apply_live_connection_to_state(state, live_connection)
 
         snapshot = coordinator.charger_snapshot_for(selected_charge_point_id)
@@ -283,7 +300,7 @@ def build_web_app(
             state = _state_to_dict(ChargerState())
             state.update(snapshot)
             state["charge_point_id"] = selected_charge_point_id
-            state.update(session_stats)
+            state.update(_merge_live_session_into_stats(state, session_stats))
             return _apply_live_connection_to_state(state, live_connection)
 
         state = _disconnected_state_for_charger(active)
@@ -946,6 +963,10 @@ def build_web_app(
             return _json_response({"error": "Could not update demo mode"}, status=500)
         return _json_response({"demo_mode_enabled": auth_store.is_demo_mode_enabled()})
 
+    async def api_admin_stats(request: web.Request) -> web.Response:
+        _require_admin(request)
+        return _json_response(auth_store.get_admin_stats())
+
     # ── SSE: push state updates to the browser ─────────────────────────────
     async def api_events(request: web.Request) -> web.StreamResponse:
         user = _require_user(request)
@@ -1429,6 +1450,7 @@ def build_web_app(
     app.router.add_post("/api/admin/unadopted-chargers/{charge_point_id}/assign", api_admin_assign_unadopted_charger)
     app.router.add_get("/api/admin/demo", api_admin_demo_settings)
     app.router.add_post("/api/admin/demo", api_admin_set_demo_mode)
+    app.router.add_get("/api/admin/stats", api_admin_stats)
     app.router.add_get("/api/state", api_state)
     app.router.add_get("/api/energy", api_energy)
     app.router.add_get("/api/power", api_power)
@@ -1529,15 +1551,44 @@ def build_web_app(
         },
         {
             "id": "adjust-charge-power-limit",
-            "label": "Set Max Energy Per Session",
+            "label": "Set Charge Current Limit",
+            "description": "Set the maximum charge current in amps (6–32)",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "limit",
+                    "type": "number",
+                    "required": True,
+                    "min": 6,
+                    "max": 32,
+                }
+            ],
+        },
+        {
+            "id": "set-session-energy-limit",
+            "label": "Set Session Energy Limit",
             "description": "Set the maximum energy per session in kWh (0 = unlimited)",
             "requires_write": True,
             "parameters": [
                 {
-                    "name": "kwh",
+                    "name": "limit",
                     "type": "number",
+                    "required": False,
+                    "min": 0.1,
+                    "max": 250,
+                }
+            ],
+        },
+        {
+            "id": "set-plug-and-go",
+            "label": "Set Plug and Go",
+            "description": "Enable or disable automatic charging when a vehicle is plugged in",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "enabled",
+                    "type": "boolean",
                     "required": True,
-                    "min": 0,
                 }
             ],
         },
@@ -1549,18 +1600,191 @@ def build_web_app(
             "parameters": [],
         },
         {
-            "id": "reset",
-            "label": "Reset Charger",
-            "description": "Reset the charger",
+            "id": "restart-charger",
+            "label": "Restart Charger",
+            "description": "Restart the charger (soft or hard reset)",
             "requires_write": True,
             "parameters": [
                 {
-                    "name": "type",
-                    "type": "string",
+                    "name": "hard_reset",
+                    "type": "boolean",
                     "required": False,
-                    "default": "Soft",
-                    "options": ["Soft", "Hard"],
+                    "default": False,
                 }
+            ],
+        },
+        {
+            "id": "perform-factory-reset",
+            "label": "Factory Reset",
+            "description": "Perform a hard factory reset of the charger",
+            "requires_write": True,
+            "parameters": [],
+        },
+        {
+            "id": "read-cp-voltage-and-duty-cycle",
+            "label": "Read CP Voltage and Duty Cycle",
+            "description": "Read the control pilot voltage and duty cycle",
+            "requires_write": True,
+            "parameters": [],
+        },
+        {
+            "id": "change-randomised-delay-duration",
+            "label": "Set Randomised Delay Duration",
+            "description": "Set the randomised delay duration in seconds (600–1800)",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "duration",
+                    "type": "number",
+                    "required": True,
+                    "min": 600,
+                    "max": 1800,
+                }
+            ],
+        },
+        {
+            "id": "adjust-suspended-state-wait-timeout",
+            "label": "Set Suspended State Wait Timeout",
+            "description": "Set how long the charger waits in suspended state before stopping (seconds, 0 = disabled)",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "value",
+                    "type": "number",
+                    "required": False,
+                    "min": 0,
+                    "max": 43200,
+                }
+            ],
+        },
+        {
+            "id": "enable-front-panel-led",
+            "label": "Enable Front Panel LED",
+            "description": "Enable or disable the front panel LED",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "value",
+                    "type": "boolean",
+                    "required": True,
+                }
+            ],
+        },
+        {
+            "id": "enable-local-control",
+            "label": "Enable Local Control",
+            "description": "Enable or disable local Modbus control",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "value",
+                    "type": "boolean",
+                    "required": True,
+                }
+            ],
+        },
+        {
+            "id": "set-max-import-capacity",
+            "label": "Set Max Import Capacity",
+            "description": "Set the DNO fuse / max import capacity in amps (40–100)",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "value",
+                    "type": "number",
+                    "required": False,
+                    "min": 40,
+                    "max": 100,
+                }
+            ],
+        },
+        {
+            "id": "set-schedule",
+            "label": "Set Schedule",
+            "description": "Create or update a charging schedule",
+            "requires_write": True,
+            "parameters": [
+                {"name": "schedule_id", "type": "string", "required": False},
+                {"name": "name", "type": "string", "required": True, "max_length": 60},
+                {
+                    "name": "periods",
+                    "type": "array",
+                    "required": True,
+                    "items": {
+                        "start_time": "HH:MM string (required)",
+                        "end_time": "HH:MM string (required)",
+                        "day_of_week": "array of Mon/Tue/Wed/Thu/Fri/Sat/Sun (required)",
+                        "current_a": "integer 6–32 (required)",
+                    },
+                },
+            ],
+        },
+        {
+            "id": "set-active-schedule",
+            "label": "Set Active Schedule",
+            "description": "Enable a schedule by ID, or disable all schedules if no ID given",
+            "requires_write": True,
+            "parameters": [
+                {"name": "schedule_id", "type": "string", "required": False},
+            ],
+        },
+        {
+            "id": "delete-charging-profile",
+            "label": "Delete Charging Profile",
+            "description": "Delete a schedule by ID, or delete all schedules if no ID given",
+            "requires_write": True,
+            "parameters": [
+                {"name": "schedule_id", "type": "string", "required": False},
+            ],
+        },
+        {
+            "id": "add-id-tags",
+            "label": "Add ID Tags",
+            "description": "Add or update one or more RFID authorisation tags",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "id_tags",
+                    "type": "array",
+                    "required": True,
+                    "items": {
+                        "id": "string (required)",
+                        "alias": "string (optional)",
+                        "expiry_date": "ISO8601 datetime string (optional)",
+                    },
+                }
+            ],
+        },
+        {
+            "id": "delete-id-tags",
+            "label": "Delete ID Tags",
+            "description": "Delete one or more RFID authorisation tags",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "id_tags",
+                    "type": "array",
+                    "required": True,
+                    "items": "string (id_tag value)",
+                }
+            ],
+        },
+        {
+            "id": "rename-id-tag",
+            "label": "Rename ID Tag",
+            "description": "Update the alias of an existing RFID tag",
+            "requires_write": True,
+            "parameters": [
+                {
+                    "name": "tag_id",
+                    "type": "string",
+                    "required": True,
+                },
+                {
+                    "name": "alias",
+                    "type": "string",
+                    "required": True,
+                },
             ],
         },
     ]
@@ -1629,22 +1853,198 @@ def build_web_app(
                 result = await coordinator.async_set_charge_mode(mode, charge_point_id=charge_point_id)
                 coordinator.record_portal_action("Change Charge Mode", mode, result, **_log_kwargs)
             elif command_id == "adjust-charge-power-limit":
-                kwh = body.get("kwh")
-                if kwh is None:
-                    return _json_response({"message": "Parameter 'kwh' is required."}, status=422)
-                await coordinator.async_set_max_energy_per_session(float(kwh), charge_point_id=charge_point_id)
+                limit = body.get("limit")
+                if limit is None:
+                    return _json_response({"message": "Parameter 'limit' is required."}, status=422)
+                limit = float(limit)
+                if not (6 <= limit <= 32):
+                    return _json_response({"message": "Parameter 'limit' must be between 6 and 32."}, status=422)
                 state = coordinator.state_for_charge_point(charge_point_id)
-                result = {"kwh": state.max_energy_per_session_kwh}
-                coordinator.record_portal_action("Set Max Energy Per Session", f"{state.max_energy_per_session_kwh:g} kWh", **_log_kwargs)
+                key = state.current_limit_key or "MaxCurrent"
+                result = await coordinator.async_change_configuration(key, limit, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Set Charge Current Limit", f"{limit:g}A", result, **_log_kwargs)
+            elif command_id == "set-session-energy-limit":
+                limit = body.get("limit")
+                kwh = float(limit) if limit is not None else 0.0
+                await coordinator.async_set_max_energy_per_session(kwh, charge_point_id=charge_point_id)
+                state = coordinator.state_for_charge_point(charge_point_id)
+                result = {"limit": state.max_energy_per_session_kwh}
+                coordinator.record_portal_action("Set Session Energy Limit", f"{state.max_energy_per_session_kwh:g} kWh", **_log_kwargs)
+            elif command_id == "set-plug-and-go":
+                enabled = body.get("enabled")
+                if enabled is None:
+                    return _json_response({"message": "Parameter 'enabled' is required."}, status=422)
+                await coordinator.async_set_plug_and_go(bool(enabled), charge_point_id=charge_point_id)
+                state = coordinator.state_for_charge_point(charge_point_id)
+                result = {"enabled": state.plug_and_go_enabled}
+                coordinator.record_portal_action("Set Plug and Go", str(enabled), result, **_log_kwargs)
             elif command_id == "unlock-connector":
                 result = await coordinator.async_unlock_connector(charge_point_id=charge_point_id)
                 coordinator.record_portal_action("Unlock Charging Port", "UnlockConnector", result, **_log_kwargs)
-            elif command_id == "reset":
-                reset_type = str(body.get("type", "Soft"))
-                if reset_type not in ("Soft", "Hard"):
-                    return _json_response({"message": "Parameter 'type' must be Soft or Hard."}, status=422)
+            elif command_id == "restart-charger":
+                hard_reset = bool(body.get("hard_reset", False))
+                reset_type = "Hard" if hard_reset else "Soft"
                 result = await coordinator.async_reset(reset_type, charge_point_id=charge_point_id)
-                coordinator.record_portal_action("Reset Charger", reset_type, result, **_log_kwargs)
+                coordinator.record_portal_action("Restart Charger", reset_type, result, **_log_kwargs)
+            elif command_id == "perform-factory-reset":
+                result = await coordinator.async_reset("Hard", charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Factory Reset", "Hard", result, **_log_kwargs)
+            elif command_id == "read-cp-voltage-and-duty-cycle":
+                result = await coordinator.async_read_cp_voltage(charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Read CP Voltage and Duty Cycle", "TriggerMessage", result, **_log_kwargs)
+            elif command_id == "change-randomised-delay-duration":
+                duration = body.get("duration")
+                if duration is None:
+                    return _json_response({"message": "Parameter 'duration' is required."}, status=422)
+                duration = int(duration)
+                if not (600 <= duration <= 1800):
+                    return _json_response({"message": "Parameter 'duration' must be between 600 and 1800."}, status=422)
+                result = await coordinator.async_change_configuration("RandomisedDelayDuration", duration, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Set Randomised Delay Duration", f"{duration}s", result, **_log_kwargs)
+            elif command_id == "adjust-suspended-state-wait-timeout":
+                value = body.get("value", 0)
+                value = int(value)
+                if not (0 <= value <= 43200):
+                    return _json_response({"message": "Parameter 'value' must be between 0 and 43200."}, status=422)
+                result = await coordinator.async_change_configuration("SuspevTime", value, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Set Suspended State Wait Timeout", f"{value}s", result, **_log_kwargs)
+            elif command_id == "enable-front-panel-led":
+                value = body.get("value")
+                if value is None:
+                    return _json_response({"message": "Parameter 'value' is required."}, status=422)
+                bool_str = "true" if value else "false"
+                result = await coordinator.async_change_configuration("FrontPanelLEDsEnabled", bool_str, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Enable Front Panel LED", bool_str, result, **_log_kwargs)
+            elif command_id == "enable-local-control":
+                value = body.get("value")
+                if value is None:
+                    return _json_response({"message": "Parameter 'value' is required."}, status=422)
+                bool_str = "true" if value else "false"
+                result = await coordinator.async_change_configuration("EnableLocalModbus", bool_str, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Enable Local Control", bool_str, result, **_log_kwargs)
+            elif command_id == "set-max-import-capacity":
+                value = body.get("value")
+                if value is None:
+                    return _json_response({"message": "Parameter 'value' is required."}, status=422)
+                value = int(value)
+                if not (40 <= value <= 100):
+                    return _json_response({"message": "Parameter 'value' must be between 40 and 100."}, status=422)
+                result = await coordinator.async_change_configuration("Imax", value, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Set Max Import Capacity", f"{value}A", result, **_log_kwargs)
+            elif command_id == "add-id-tags":
+                raw_tags = body.get("id_tags")
+                if not isinstance(raw_tags, list) or not raw_tags:
+                    return _json_response({"message": "Parameter 'id_tags' must be a non-empty array."}, status=422)
+                saved = []
+                for entry in raw_tags:
+                    if not isinstance(entry, dict) or not entry.get("id"):
+                        return _json_response({"message": "Each id_tags entry must have an 'id' field."}, status=422)
+                    tag = {
+                        "id_tag": entry["id"],
+                        "alias": entry.get("alias") or None,
+                        "expires_at": entry.get("expiry_date") or None,
+                        "enabled": True,
+                    }
+                    saved.append(await coordinator.async_save_rfid_tag(tag, charge_point_id=charge_point_id))
+                result = {"id_tags": saved}
+                coordinator.record_portal_action("Add ID Tags", f"{len(saved)} tag(s)", result, **_log_kwargs)
+            elif command_id == "delete-id-tags":
+                raw_tags = body.get("id_tags")
+                if not isinstance(raw_tags, list) or not raw_tags:
+                    return _json_response({"message": "Parameter 'id_tags' must be a non-empty array."}, status=422)
+                deleted = []
+                for id_tag in raw_tags:
+                    if not isinstance(id_tag, str) or not id_tag.strip():
+                        return _json_response({"message": "Each id_tags entry must be a non-empty string."}, status=422)
+                    await coordinator.async_delete_rfid_tag(id_tag.strip(), charge_point_id=charge_point_id)
+                    deleted.append(id_tag.strip())
+                result = {"deleted": deleted}
+                coordinator.record_portal_action("Delete ID Tags", f"{len(deleted)} tag(s)", result, **_log_kwargs)
+            elif command_id == "set-active-schedule":
+                schedule_id = body.get("schedule_id")
+                if schedule_id is None:
+                    # No schedule_id — disable all schedules
+                    state = coordinator.state_for_charge_point(charge_point_id)
+                    result = {}
+                    for sched in state.charging_schedule:
+                        if sched.get("enabled"):
+                            result = await coordinator.async_set_charging_schedule_enabled(
+                                str(sched["id"]), False, charge_point_id=charge_point_id
+                            )
+                    coordinator.record_portal_action("Set Active Schedule", "Disabled all", result, **_log_kwargs)
+                else:
+                    result = await coordinator.async_set_charging_schedule_enabled(
+                        str(schedule_id), True, charge_point_id=charge_point_id
+                    )
+                    coordinator.record_portal_action("Set Active Schedule", str(schedule_id), result, **_log_kwargs)
+            elif command_id == "delete-charging-profile":
+                schedule_id = body.get("schedule_id")
+                if schedule_id is None:
+                    # No schedule_id — delete all schedules
+                    state = coordinator.state_for_charge_point(charge_point_id)
+                    deleted_ids = [str(s["id"]) for s in state.charging_schedule if s.get("id") is not None]
+                    for sid in deleted_ids:
+                        await coordinator.async_delete_charging_schedule(sid, charge_point_id=charge_point_id)
+                    result = {"deleted": deleted_ids}
+                    coordinator.record_portal_action("Delete Charging Profile", f"{len(deleted_ids)} schedule(s)", result, **_log_kwargs)
+                else:
+                    result = await coordinator.async_delete_charging_schedule(str(schedule_id), charge_point_id=charge_point_id)
+                    coordinator.record_portal_action("Delete Charging Profile", str(schedule_id), result, **_log_kwargs)
+            elif command_id == "set-schedule":
+                name = body.get("name")
+                if not name:
+                    return _json_response({"message": "Parameter 'name' is required."}, status=422)
+                periods = body.get("periods")
+                if not isinstance(periods, list) or not periods:
+                    return _json_response({"message": "Parameter 'periods' must be a non-empty array."}, status=422)
+                schedule_id = body.get("schedule_id")
+                if len(periods) == 1:
+                    period = periods[0]
+                    schedule = {
+                        "id": schedule_id,
+                        "name": str(name)[:60],
+                        "enabled": False,
+                        "start": period.get("start_time", "00:00"),
+                        "end": period.get("end_time", "01:00"),
+                        "days": period.get("day_of_week", []),
+                        "current_a": period.get("current_a", 32),
+                    }
+                    result = await coordinator.async_save_charging_schedule(schedule, charge_point_id=charge_point_id)
+                    coordinator.record_portal_action("Set Schedule", name, result, **_log_kwargs)
+                else:
+                    # Multiple periods — create one schedule per period, inheriting the name with a suffix
+                    saved = []
+                    for i, period in enumerate(periods):
+                        schedule = {
+                            "id": None,
+                            "name": f"{str(name)[:55]} {i + 1}" if len(periods) > 1 else str(name)[:60],
+                            "enabled": False,
+                            "start": period.get("start_time", "00:00"),
+                            "end": period.get("end_time", "01:00"),
+                            "days": period.get("day_of_week", []),
+                            "current_a": period.get("current_a", 32),
+                        }
+                        saved.append(await coordinator.async_save_charging_schedule(schedule, charge_point_id=charge_point_id))
+                    result = {"schedules": saved}
+                    coordinator.record_portal_action("Set Schedule", f"{name} ({len(saved)} periods)", result, **_log_kwargs)
+            elif command_id == "rename-id-tag":
+                tag_id = body.get("tag_id")
+                alias = body.get("alias")
+                if not tag_id:
+                    return _json_response({"message": "Parameter 'tag_id' is required."}, status=422)
+                if alias is None:
+                    return _json_response({"message": "Parameter 'alias' is required."}, status=422)
+                state = coordinator.state_for_charge_point(charge_point_id)
+                existing = next(
+                    (t for t in state.rfid_tags if str(t.get("id_tag")) == str(tag_id)),
+                    None,
+                )
+                if existing is None:
+                    return _json_response({"message": "ID tag not found."}, status=404)
+                tag = dict(existing)
+                tag["alias"] = str(alias).strip() or None
+                result = await coordinator.async_save_rfid_tag(tag, charge_point_id=charge_point_id)
+                coordinator.record_portal_action("Rename ID Tag", f"{tag_id} → {alias}", result, **_log_kwargs)
             else:
                 return _json_response({"message": "Command not implemented."}, status=501)
         except (RuntimeError, ValueError) as exc:
@@ -1722,6 +2122,26 @@ def build_web_app(
             },
         })
 
+    async def user_api_list_schedules(request: web.Request) -> web.Response:
+        principal = _require_api_key(request, auth_store)
+        charge_point_id = request.match_info["uuid"]
+        if _api_charger_for_principal(principal["user_id"], charge_point_id) is None:
+            return _json_response({"message": "Charger not found."}, status=404)
+        state = coordinator.state_for_charge_point(charge_point_id)
+        schedules = [
+            {
+                "id": s.get("id"),
+                "name": s.get("name"),
+                "enabled": s.get("enabled", False),
+                "start": s.get("start"),
+                "end": s.get("end"),
+                "days": s.get("days", []),
+                "current_a": s.get("current_a"),
+            }
+            for s in (state.charging_schedule or [])
+        ]
+        return _json_response({"data": schedules})
+
     app.router.add_get("/api/v1/ev-charger", user_api_list_chargers)
     app.router.add_get("/api/v1/ev-charger/{uuid}", user_api_get_charger)
     app.router.add_get("/api/v1/ev-charger/{uuid}/commands", user_api_list_commands)
@@ -1729,6 +2149,37 @@ def build_web_app(
     app.router.add_post("/api/v1/ev-charger/{uuid}/commands/{command_id}", user_api_run_command)
     app.router.add_get("/api/v1/ev-charger/{uuid}/charging-sessions", user_api_list_charging_sessions)
     app.router.add_get("/api/v1/ev-charger/{uuid}/meter-data", user_api_list_meter_data)
+    app.router.add_get("/api/v1/ev-charger/{uuid}/schedules", user_api_list_schedules)
+
+    async def user_api_list_id_tags(request: web.Request) -> web.Response:
+        principal = _require_api_key(request, auth_store)
+        charge_point_id = request.match_info["uuid"]
+        if _api_charger_for_principal(principal["user_id"], charge_point_id) is None:
+            return _json_response({"message": "Charger not found."}, status=404)
+        state = coordinator.state_for_charge_point(charge_point_id)
+        tags = [
+            {
+                "id": t.get("id_tag"),
+                "alias": t.get("alias"),
+                "expires_at": t.get("expires_at"),
+                "enabled": t.get("enabled", True),
+            }
+            for t in (state.rfid_tags or [])
+        ]
+        return _json_response({"data": tags})
+
+    app.router.add_get("/api/v1/ev-charger/{uuid}/id-tags", user_api_list_id_tags)
+
+    async def api_v1_openapi_yaml(request: web.Request) -> web.Response:
+        path = Path(__file__).parent / "templates" / "openapi.yaml"
+        return web.Response(text=path.read_text(), content_type="application/yaml")
+
+    async def api_v1_docs(request: web.Request) -> web.Response:
+        path = Path(__file__).parent / "templates" / "api-docs.html"
+        return web.Response(text=path.read_text(), content_type="text/html")
+
+    app.router.add_get("/api/v1/openapi.yaml", api_v1_openapi_yaml)
+    app.router.add_get("/api/v1/docs", api_v1_docs)
 
     async def _api_not_found(request: web.Request) -> web.Response:
         return _json_response({"message": "Not found."}, status=404)

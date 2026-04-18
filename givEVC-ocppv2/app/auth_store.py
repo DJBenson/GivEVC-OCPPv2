@@ -1454,6 +1454,50 @@ class AuthStore:
             "month_kwh": round(month_row["kwh"], 3) if month_row and month_row["kwh"] is not None else None,
         }
 
+    def get_admin_stats(self) -> dict:
+        with self._connect() as conn:
+            def scalar(sql, params=()):
+                return conn.execute(sql, params).fetchone()[0] or 0
+
+            users_total        = scalar("SELECT COUNT(*) FROM users WHERE is_demo = 0")
+            users_pending      = scalar("SELECT COUNT(*) FROM users WHERE is_demo = 0 AND email_verified_at IS NULL")
+            users_active       = scalar("SELECT COUNT(*) FROM users WHERE is_demo = 0 AND email_verified_at IS NOT NULL AND disabled_at IS NULL")
+            users_disabled     = scalar("SELECT COUNT(*) FROM users WHERE is_demo = 0 AND disabled_at IS NOT NULL")
+            chargers_total     = scalar("SELECT COUNT(*) FROM chargers c JOIN users u ON u.id = c.user_id WHERE c.deleted_at IS NULL AND u.is_demo = 0")
+            chargers_pending   = scalar("SELECT COUNT(*) FROM chargers c JOIN users u ON u.id = c.user_id WHERE c.deleted_at IS NULL AND c.charge_point_id IS NULL AND u.is_demo = 0")
+            chargers_adopted   = scalar("SELECT COUNT(*) FROM chargers c JOIN users u ON u.id = c.user_id WHERE c.deleted_at IS NULL AND c.charge_point_id IS NOT NULL AND u.is_demo = 0")
+            onboarding_active  = scalar("SELECT COUNT(*) FROM onboarding_sessions os JOIN users u ON u.id = os.user_id WHERE os.consumed_at IS NULL AND os.expires_at > ? AND u.is_demo = 0", (_now(),))
+            sessions_total     = scalar("SELECT COUNT(*) FROM charging_sessions cs JOIN chargers c ON c.charge_point_id = cs.charge_point_id JOIN users u ON u.id = c.user_id WHERE c.deleted_at IS NULL AND u.is_demo = 0")
+            sessions_active    = scalar("SELECT COUNT(*) FROM charging_sessions cs JOIN chargers c ON c.charge_point_id = cs.charge_point_id JOIN users u ON u.id = c.user_id WHERE c.deleted_at IS NULL AND cs.stopped_at IS NULL AND u.is_demo = 0")
+            meter_samples      = scalar("SELECT COUNT(*) FROM meter_readings mr JOIN chargers c ON c.charge_point_id = mr.charge_point_id JOIN users u ON u.id = c.user_id WHERE c.deleted_at IS NULL AND u.is_demo = 0")
+            api_keys_active    = scalar("SELECT COUNT(*) FROM api_keys ak JOIN users u ON u.id = ak.user_id WHERE ak.revoked_at IS NULL AND (ak.expires_at IS NULL OR ak.expires_at > ?) AND u.is_demo = 0", (_now(),))
+            browser_sessions   = scalar("SELECT COUNT(*) FROM sessions WHERE expires_at > ?", (_now(),))
+
+        db_size_bytes = self.path.stat().st_size if self.path.exists() else 0
+
+        return {
+            "users": {
+                "total": users_total,
+                "pending_verification": users_pending,
+                "active": users_active,
+                "disabled": users_disabled,
+            },
+            "chargers": {
+                "total": chargers_total,
+                "pending": chargers_pending,
+                "adopted": chargers_adopted,
+                "onboarding_sessions_active": onboarding_active,
+            },
+            "charging_sessions": {
+                "total": sessions_total,
+                "active": sessions_active,
+            },
+            "meter_samples": meter_samples,
+            "api_keys_active": api_keys_active,
+            "browser_sessions_active": browser_sessions,
+            "database_size_bytes": db_size_bytes,
+        }
+
     def list_charging_sessions(
         self,
         user_id: str,

@@ -341,24 +341,6 @@ body.is-demo .demo-badge { display: flex; }
 .card-title { font-weight: 600; font-size: 14px; }
 .card-body { padding: 20px; }
 
-/* ─── Stat chips ─────────────────────────────────── */
-.stats-row {
-  display: grid; gap: 16px;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  margin-bottom: 24px;
-}
-.stat-card {
-  background: var(--surface); border-radius: var(--radius);
-  box-shadow: var(--shadow); border: 1px solid var(--border);
-  padding: 18px 20px;
-}
-.stat-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
-.stat-value { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; }
-.stat-value .unit { font-size: 13px; font-weight: 700; color: var(--teal); margin-left: 2px; }
-.stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
-.stat-card.teal .stat-value { color: var(--teal); }
-.stat-card.warn .stat-value { color: var(--warn); }
-.stat-card.ok .stat-value { color: var(--ok); }
 
 /* ─── General page layout ────────────────────────── */
 .general-grid {
@@ -801,7 +783,6 @@ canvas { width: 100% !important; display: block; }
 }
 @media (max-width: 600px) {
   .content { padding: 16px; }
-  .stats-row { grid-template-columns: 1fr 1fr; }
   .pill-tabs { width: 100%; }
   .pill-tab { flex: 1; text-align: center; }
   .mode-grid { grid-template-columns: 1fr 1fr; }
@@ -1021,39 +1002,6 @@ canvas { width: 100% !important; display: block; }
 
     <!-- ══════════ OVERVIEW ══════════ -->
     <div class="section active" id="page-general">
-      <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">Status</div>
-          <div id="stat-status-val" class="stat-value" style="font-size:18px;color:var(--ok)">● Online</div>
-          <div class="stat-sub" id="stat-status-sub">EV Charger connected</div>
-        </div>
-        <div class="stat-card teal">
-          <div class="stat-label">Power Now</div>
-          <div class="stat-value"><span id="stat-power-val">—</span><span id="stat-power-unit" class="unit">kW</span></div>
-          <div class="stat-sub">Live charge power</div>
-        </div>
-        <div class="stat-card teal">
-          <div class="stat-label">Last Session</div>
-          <div class="stat-value"><span id="stat-session-val">—</span><span id="stat-session-unit" class="unit">kWh</span></div>
-          <div class="stat-sub">Previous charge</div>
-        </div>
-        <div class="stat-card teal">
-          <div class="stat-label">Today</div>
-          <div class="stat-value"><span id="stat-today-val">—</span><span id="stat-today-unit" class="unit"></span></div>
-          <div class="stat-sub">Energy used today</div>
-        </div>
-        <div class="stat-card teal">
-          <div class="stat-label">This Month</div>
-          <div class="stat-value"><span id="stat-month-val">—</span><span id="stat-month-unit" class="unit"></span></div>
-          <div class="stat-sub">Energy used this month</div>
-        </div>
-        <div class="stat-card teal">
-          <div class="stat-label">Total Energy</div>
-          <div class="stat-value"><span id="stat-total-val">—</span><span id="stat-total-unit" class="unit">kWh</span></div>
-          <div class="stat-sub">All time</div>
-        </div>
-      </div>
-
       <div class="general-grid">
         <div class="card">
           <div class="card-header">
@@ -1074,10 +1022,10 @@ canvas { width: 100% !important; display: block; }
                 <div id="hero-power-unit" class="pw-unit">kW</div>
               </button>
             </div>
-            <div id="mode-badge" class="mode-badge">
+            <a id="mode-badge" class="mode-badge" href="#" onclick="event.preventDefault();showSub('modes')" style="text-decoration:none;cursor:pointer">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               Grid Mode
-            </div>
+            </a>
             <div id="tx-badge" class="badge badge-ok" style="margin-top:10px;display:none"></div>
           </div>
         </div>
@@ -1217,7 +1165,6 @@ canvas { width: 100% !important; display: block; }
       <!-- Modes -->
       <div class="subpage" id="sub-modes">
         <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
-        <div id="mode-status" style="display:none;margin-bottom:16px;padding:10px 16px;border-radius:8px;font-size:13px"></div>
         <div class="mode-grid">
           <div class="mode-card" data-mode="SuperEco" onclick="setChargeMode('SuperEco', this)">
             <div class="mode-card-icon">
@@ -1242,6 +1189,7 @@ canvas { width: 100% !important; display: block; }
           </div>
 
         </div>
+        <div id="mode-status" style="display:none;margin-top:16px;padding:10px 16px;border-radius:8px;font-size:13px"></div>
       </div>
 
       <!-- Schedule -->
@@ -1772,6 +1720,7 @@ canvas { width: 100% !important; display: block; }
         <button class="pill-tab active" data-admin-sub="accounts" onclick="showAdminSub('accounts')">User Accounts</button>
         <button class="pill-tab" data-admin-sub="chargers" onclick="showAdminSub('chargers')">Chargers</button>
         <button class="pill-tab" data-admin-sub="portal" onclick="showAdminSub('portal')">Portal Settings</button>
+        <button class="pill-tab" data-admin-sub="statistics" onclick="showAdminSub('statistics')">Statistics</button>
       </div>
 
       <!-- User Accounts -->
@@ -1923,6 +1872,28 @@ canvas { width: 100% !important; display: block; }
             <p id="admin-smtp-summary" style="color:var(--muted);font-size:13px;margin-bottom:12px">SMTP status unknown.</p>
             <button id="admin-test-smtp" class="btn btn-teal btn-sm" type="button" onclick="testAdminSmtp()" disabled>Send Test Email</button>
             <div id="admin-smtp-status" class="auth-error"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Statistics -->
+      <div class="subpage" id="admin-sub-statistics">
+        <div class="admin-grid">
+          <div class="account-panel">
+            <h4>User Accounts</h4>
+            <div id="admin-stats-users" style="color:var(--muted);font-size:13px">Loading…</div>
+          </div>
+          <div class="account-panel">
+            <h4>Chargers</h4>
+            <div id="admin-stats-chargers" style="color:var(--muted);font-size:13px">Loading…</div>
+          </div>
+          <div class="account-panel">
+            <h4>Charging Data</h4>
+            <div id="admin-stats-data" style="color:var(--muted);font-size:13px">Loading…</div>
+          </div>
+          <div class="account-panel">
+            <h4>System</h4>
+            <div id="admin-stats-system" style="color:var(--muted);font-size:13px">Loading…</div>
           </div>
         </div>
       </div>
@@ -2150,7 +2121,7 @@ const statisticsSubPaths = { power:'/statistics', energy:'/statistics/energy' };
 const statisticsSubAliases = { '/power': 'power', '/energy': 'energy', '/statistics/power': 'power' };
 const logSubPaths = { logs:'/logs', errors:'/logs/errors' };
 const logSubAliases = { '/errors': 'errors', '/settings/logs': 'logs' };
-const adminSubPaths = { accounts:'/admin/accounts', chargers:'/admin/chargers', portal:'/admin/portal' };
+const adminSubPaths = { accounts:'/admin/accounts', chargers:'/admin/chargers', portal:'/admin/portal', statistics:'/admin/statistics' };
 const accountSubPaths = { chargers:'/account/chargers', security:'/account/security', apikeys:'/account/api-keys' };
 const accountSubAliases = { '/chargers': 'chargers' };
 let _modalResolve = null;
@@ -3805,6 +3776,42 @@ function activateAdminSub(name) {
   adminPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('admin-sub-' + subName)?.classList.add('active');
   adminPage.querySelector(`.pill-tab[data-admin-sub="${subName}"]`)?.classList.add('active');
+  if (subName === 'statistics') loadAdminStats();
+}
+
+async function loadAdminStats() {
+  try {
+    const d = await apiJson('/api/admin/stats');
+    if (!d) return;
+    const u = d.users || {};
+    const c = d.chargers || {};
+    document.getElementById('admin-stats-users').innerHTML =
+      `<div class="stat-row"><span>Total: </span><strong>${u.total ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Active: </span><strong>${u.active ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Pending verification: </span><strong>${u.pending_verification ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Disabled: </span><strong>${u.disabled ?? '—'}</strong></div>`;
+    document.getElementById('admin-stats-chargers').innerHTML =
+      `<div class="stat-row"><span>Total: </span><strong>${c.total ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Adopted: </span><strong>${c.adopted ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Pending adoption: </span><strong>${c.pending ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Active onboarding sessions: </span><strong>${c.onboarding_sessions_active ?? '—'}</strong></div>`;
+    const sess = d.charging_sessions || {};
+    document.getElementById('admin-stats-data').innerHTML =
+      `<div class="stat-row"><span>Charging sessions (total): </span><strong>${sess.total ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Charging sessions (active): </span><strong>${sess.active ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Meter samples: </span><strong>${(d.meter_samples ?? '—').toLocaleString?.() ?? d.meter_samples}</strong></div>`;
+    const dbMb = d.database_size_bytes ? (d.database_size_bytes / 1048576).toFixed(2) + ' MB' : '—';
+    document.getElementById('admin-stats-system').innerHTML =
+      `<div class="stat-row"><span>Active API keys: </span><strong>${d.api_keys_active ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Active browser sessions: </span><strong>${d.browser_sessions_active ?? '—'}</strong></div>` +
+      `<div class="stat-row"><span>Database size: </span><strong>${dbMb}</strong></div>`;
+  } catch (err) {
+    const message = escapeHtml(err.message || 'Could not load statistics');
+    ['admin-stats-users', 'admin-stats-chargers', 'admin-stats-data', 'admin-stats-system'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<span style="color:var(--err)">${message}</span>`;
+    });
+  }
 }
 
 function showAccountSub(name, options = {}) {
@@ -4059,22 +4066,13 @@ function applyState(s) {
   const serial = s.charge_point_serial_number || s.charge_box_serial_number || 'EV Charger';
   set('status-serial', serial);
 
-  // ── Overview stat cards ───────────────────────────
+  // ── Overview stat cards (removed tiles — keep set() calls harmless) ─────
   set('stat-status-val',   online ? '● Online' : '○ Offline');
   set('stat-status-sub',   online ? serial : 'Disconnected');
   setClass('stat-status-val', 'stat-err', !online);
 
-  set('stat-power-val',    s.live_power_kw  != null ? fmt(s.live_power_kw, 2) : '—');
-  set('stat-power-unit',   s.live_power_kw  != null ? 'kW' : '');
+  const _charging = !!(s.transaction_id || s.transaction_active);
   const _lastKwh = s.last_session_kwh != null ? s.last_session_kwh : s.session_energy_kwh;
-  set('stat-session-val',  _lastKwh != null ? fmt(_lastKwh, 2) : '—');
-  set('stat-session-unit', _lastKwh != null ? 'kWh' : '');
-  set('stat-total-val',    s.total_energy_kwh != null ? fmt(s.total_energy_kwh, 2) : '—');
-  set('stat-total-unit',   s.total_energy_kwh != null ? 'kWh' : '');
-  set('stat-today-val',    s.today_kwh != null ? fmt(s.today_kwh, 2) : '—');
-  set('stat-today-unit',   s.today_kwh != null ? 'kWh' : '');
-  set('stat-month-val',    s.month_kwh != null ? fmt(s.month_kwh, 2) : '—');
-  set('stat-month-unit',   s.month_kwh != null ? 'kWh' : '');
 
   // ── Charger hero ──────────────────────────────────
   const plugged = !!s.car_plugged_in;
