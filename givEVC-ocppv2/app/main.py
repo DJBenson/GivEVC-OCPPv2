@@ -150,6 +150,10 @@ def build_web_app(
         if user is not None:
             request["user"] = user
 
+        if request.path == "/api/v1" or request.path.startswith("/api/v1/"):
+            if not auth_store.is_public_api_enabled():
+                return _json_response({"message": "Public API is disabled."}, status=503)
+
         if (request.path.startswith("/api/")
                 and not request.path.startswith("/api/auth/")
                 and not request.path.startswith("/api/v1/")):
@@ -249,6 +253,7 @@ def build_web_app(
         return {
             "registration_enabled": auth_store.is_registration_enabled(),
             "initial_email_validation_enabled": auth_store.is_email_verification_enabled(),
+            "public_api_enabled": auth_store.is_public_api_enabled(),
             "smtp_configured": email_sender.configured,
             "smtp_host": SMTP_HOST,
             "smtp_from": SMTP_FROM,
@@ -845,6 +850,13 @@ def build_web_app(
                 auth_store.set_email_verification_enabled(enabled)
                 coordinator.record_portal_action(
                     "Admin Email Validation",
+                    "Enabled" if enabled else "Disabled",
+                )
+            if "public_api_enabled" in body:
+                enabled = bool(body.get("public_api_enabled"))
+                auth_store.set_public_api_enabled(enabled)
+                coordinator.record_portal_action(
+                    "Admin Public API",
                     "Enabled" if enabled else "Disabled",
                 )
         except Exception:

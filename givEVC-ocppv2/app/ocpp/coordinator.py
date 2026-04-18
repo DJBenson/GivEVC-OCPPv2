@@ -1653,28 +1653,30 @@ class OcppCoordinator:
     async def _async_apply_charging_schedule(
         self, schedule: dict[str, Any], charge_point_id: str | None = None
     ) -> dict[str, Any]:
+        payload = _build_charging_schedule_payload(schedule)
         result = await self._ocpp_call(
             "SetChargingProfile",
-            _build_charging_schedule_payload(schedule),
+            payload,
             timeout=30,
             charge_point_id=charge_point_id,
         )
         _require_ocpp_status("SetChargingProfile", result, {"Accepted"})
-        return result
+        return {"request": payload, "response": result}
 
     async def _async_clear_charging_schedule(self, charge_point_id: str | None = None) -> dict[str, Any]:
+        payload = {
+            "connectorId": 0,
+            "chargingProfilePurpose": "TxDefaultProfile",
+            "stackLevel": 0,
+        }
         result = await self._ocpp_call(
             "ClearChargingProfile",
-            {
-                "connectorId": 0,
-                "chargingProfilePurpose": "TxDefaultProfile",
-                "stackLevel": 0,
-            },
+            payload,
             timeout=30,
             charge_point_id=charge_point_id,
         )
         _require_ocpp_status("ClearChargingProfile", result, {"Accepted", "Unknown"})
-        return result
+        return {"request": payload, "response": result}
 
     async def async_save_rfid_tag(
         self, tag: dict[str, Any], charge_point_id: str | None = None
@@ -2998,15 +3000,27 @@ def _build_charging_schedule_payload(schedule: dict[str, Any]) -> dict[str, Any]
 
     start_hours, start_minutes = _split_hhmm(schedule.get("start") or "00:00")
     end_hours, end_minutes = _split_hhmm(schedule.get("end") or "01:00")
-    start_secs = _local_hhmm_to_utc_secs(start_hours, start_minutes)
-    end_secs = _local_hhmm_to_utc_secs(end_hours, end_minutes)
     limit_a = max(6, min(32, _coerce_int(schedule.get("current_a")) or 32))
+    local_tz = datetime.now().astimezone().tzinfo or UTC
 
     if all_days_selected:
         recurrency = "Daily"
         cycle_seconds = 86400
         anchor = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        intervals = _schedule_intervals_for_day(start_secs, end_secs, cycle_seconds)
+
+        now_local = datetime.now(local_tz)
+        local_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        local_start = local_day.replace(hour=start_hours, minute=start_minutes)
+        local_end = local_day.replace(hour=end_hours, minute=end_minutes)
+        if local_end <= local_start:
+            local_end += timedelta(days=1)
+
+        utc_start = local_start.astimezone(UTC)
+        utc_end = local_end.astimezone(UTC)
+        start_offset = utc_start.hour * 3600 + utc_start.minute * 60
+        duration_seconds = int((utc_end - utc_start).total_seconds())
+        intervals: list[tuple[int, int]] = []
+        _add_circular_schedule_interval(intervals, start_offset, duration_seconds, cycle_seconds)
     else:
         recurrency = "Weekly"
         cycle_seconds = 604800
@@ -3015,10 +3029,25 @@ def _build_charging_schedule_payload(schedule: dict[str, Any]) -> dict[str, Any]
         anchor = (now_utc - timedelta(days=days_since_monday)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
+        now_local = datetime.now(local_tz)
+        local_week_start = (now_local - timedelta(days=now_local.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         intervals: list[tuple[int, int]] = []
         for day in sorted(set(days), key=lambda value: SCHEDULE_DAY_INDEX[value]):
-            base = SCHEDULE_DAY_INDEX[day] * 86400
-            intervals.extend(_schedule_intervals_for_day(base + start_secs, base + end_secs, cycle_seconds))
+            local_day = local_week_start + timedelta(days=SCHEDULE_DAY_INDEX[day])
+            local_start = local_day.replace(hour=start_hours, minute=start_minutes)
+            local_end = local_day.replace(hour=end_hours, minute=end_minutes)
+            if local_end <= local_start:
+                local_end += timedelta(days=1)
+
+            utc_start = local_start.astimezone(UTC)
+            utc_end = local_end.astimezone(UTC)
+            start_offset = int((utc_start - anchor).total_seconds())
+            duration_seconds = int((utc_end - utc_start).total_seconds())
+            _add_circular_schedule_interval(
+                intervals, start_offset, duration_seconds, cycle_seconds
+            )
 
     periods = _schedule_periods_from_intervals(intervals, cycle_seconds, limit_a)
     profile = {
@@ -3039,24 +3068,24 @@ def _build_charging_schedule_payload(schedule: dict[str, Any]) -> dict[str, Any]
     return {"connectorId": 0, "csChargingProfiles": profile}
 
 
-def _schedule_intervals_for_day(start: int, end: int, cycle_seconds: int) -> list[tuple[int, int]]:
-    if end <= start:
-        end += 86400
+def _add_circular_schedule_interval(
+    intervals: list[tuple[int, int]],
+    start_offset: int,
+    duration_seconds: int,
+    cycle_seconds: int,
+) -> None:
+    if duration_seconds >= cycle_seconds:
+        intervals.append((0, cycle_seconds))
+        return
 
-    intervals: list[tuple[int, int]] = []
-    if start >= cycle_seconds:
-        start -= cycle_seconds
-        end -= cycle_seconds
-    if end > cycle_seconds:
-        intervals.append((start, cycle_seconds))
-        intervals.append((0, end - cycle_seconds))
-    else:
-        intervals.append((start, end))
-    return [
-        (max(0, min(cycle_seconds, interval_start)), max(0, min(cycle_seconds, interval_end)))
-        for interval_start, interval_end in intervals
-        if interval_end > interval_start
-    ]
+    start_offset %= cycle_seconds
+    end_offset = (start_offset + duration_seconds) % cycle_seconds
+    if start_offset < end_offset:
+        intervals.append((start_offset, end_offset))
+        return
+
+    intervals.append((0, end_offset))
+    intervals.append((start_offset, cycle_seconds))
 
 
 def _schedule_periods_from_intervals(
@@ -3098,15 +3127,6 @@ def _split_hhmm(value: Any) -> tuple[int, int]:
     normalised = _normalise_time(value)
     hours, minutes = normalised.split(":", 1)
     return int(hours), int(minutes)
-
-
-def _local_hhmm_to_utc_secs(hours: int, minutes: int) -> int:
-    local_tz = datetime.now().astimezone().tzinfo or UTC
-    local_dt = datetime.now(local_tz).replace(
-        hour=hours, minute=minutes, second=0, microsecond=0
-    )
-    utc_dt = local_dt.astimezone(UTC)
-    return utc_dt.hour * 3600 + utc_dt.minute * 60
 
 
 def _require_ocpp_status(action: str, result: dict[str, Any], accepted: set[str]) -> None:

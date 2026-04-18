@@ -104,11 +104,9 @@ body.first-user-registration .auth-tabs { display:none; }
 .no-charger-dashboard { display:none; }
 body.no-charger .content > .section { display:none !important; }
 body.no-charger.page-account #page-account,
-body.no-charger.page-chargers #page-chargers,
 body.no-charger.page-admin #page-admin { display:block !important; }
 body.no-charger .no-charger-dashboard { display:block; }
 body.no-charger.page-account .no-charger-dashboard,
-body.no-charger.page-chargers .no-charger-dashboard,
 body.no-charger.page-admin .no-charger-dashboard { display:none; }
 body.no-charger .nav-status,
 body.no-charger .charger-nav-link { display:none; }
@@ -635,6 +633,24 @@ body.modal-open { overflow: hidden; }
 .badge-ok { background: rgba(102,187,106,.15); color: #388e3c; }
 .badge-err { background: rgba(239,83,80,.12); color: var(--err); }
 .badge-warn { background: rgba(255,107,53,.12); color: var(--warn); }
+.log-response-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.log-json-btn {
+  width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--muted); display: inline-grid; place-items: center;
+  cursor: pointer; transition: border-color .15s, color .15s, background .15s;
+}
+.log-json-btn:hover,
+.log-json-btn:focus-visible { border-color: var(--teal); color: var(--teal-dk); outline: none; }
+.log-json-btn.copied { border-color: var(--ok); color: #388e3c; background: rgba(102,187,106,.1); }
+.log-json-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.log-json-tooltip {
+  position: fixed; display: none; z-index: 500; max-width: min(640px, calc(100vw - 32px));
+  max-height: min(420px, calc(100vh - 32px)); overflow: auto; padding: 12px;
+  border: 1px solid rgba(255,255,255,.14); border-radius: 8px; background: #111827;
+  color: #e5e7eb; box-shadow: 0 18px 50px rgba(0,0,0,.32);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; line-height: 1.45; white-space: pre-wrap; pointer-events: none;
+}
 
 .pagination { display: flex; align-items: center; gap: 4px; margin-top: 16px; flex-wrap: wrap; }
 .table-footer .pagination { margin-top: 0; }
@@ -643,7 +659,7 @@ body.modal-open { overflow: hidden; }
 .page-btn.active { background: var(--teal); border-color: var(--teal); color: #fff; }
 .page-btn:disabled { opacity: .35; cursor: not-allowed; }
 
-/* ─── Settings (Other) cards ─────────────────────── */
+/* ─── Settings (Control) cards ───────────────────── */
 .settings-grid {
   display: grid; gap: 16px;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -930,21 +946,13 @@ canvas { width: 100% !important; display: block; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M2 12H4M20 12h2"/></svg>
       Settings
     </button>
-    <button class="nav-link charger-nav-link" data-page="power" onclick="showPage('power')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      Power
-    </button>
-    <button class="nav-link charger-nav-link" data-page="energy" onclick="showPage('energy')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h2l2 6 2-9 2 6 1-3h1"/></svg>
-      Energy
+    <button class="nav-link charger-nav-link" data-page="statistics" onclick="showPage('statistics')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx=".6"/><rect x="12" y="7" width="3" height="9" rx=".6"/><rect x="17" y="3" width="3" height="13" rx=".6"/></svg>
+      Statistics
     </button>
     <button class="nav-link charger-nav-link" data-page="errors" onclick="showPage('errors')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      Errors
-    </button>
-    <button class="nav-link" data-page="chargers" onclick="showPage('chargers')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 17h10M9 17v3M15 17v3"/><rect x="5" y="4" width="14" height="10" rx="2"/><path d="M8 8h8"/></svg>
-      Chargers
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      Logs
     </button>
     <button class="nav-link" data-page="account" onclick="showPage('account')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
@@ -1159,11 +1167,10 @@ canvas { width: 100% !important; display: block; }
     <div class="section" id="page-settings">
       <div class="pill-tabs">
         <button class="pill-tab active" data-sub="general" onclick="showSub('general')">General</button>
+        <button class="pill-tab" data-sub="other" onclick="showSub('other')">Control</button>
         <button class="pill-tab" data-sub="modes" onclick="showSub('modes')">Modes</button>
         <button class="pill-tab" data-sub="schedule" onclick="showSub('schedule')">Schedule</button>
         <button class="pill-tab" data-sub="idtags" onclick="showSub('idtags')">ID Tags</button>
-        <button class="pill-tab" data-sub="other" onclick="showSub('other')">Other</button>
-        <button class="pill-tab" data-sub="logs" onclick="showSub('logs')">Logs</button>
       </div>
 
       <!-- General -->
@@ -1193,7 +1200,7 @@ canvas { width: 100% !important; display: block; }
             </div>
           </div>
 
-          <div class="settings-card">
+          <div class="settings-card admin-only">
             <h4>Log OCPP Commands</h4>
             <p>Record all automatic GetConfiguration and TriggerMessage MeterValues commands in the activity log. When enabled, the log will grow quickly due to periodic polling.</p>
             <div class="toggle-row">
@@ -1298,7 +1305,7 @@ canvas { width: 100% !important; display: block; }
         </div>
       </div>
 
-      <!-- Other -->
+      <!-- Control -->
       <div class="subpage" id="sub-other">
         <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
         <div class="settings-grid">
@@ -1511,8 +1518,90 @@ canvas { width: 100% !important; display: block; }
         </div>
       </div>
 
-      <!-- Logs -->
-      <div class="subpage" id="sub-logs">
+    </div>
+
+    <!-- ══════════ STATISTICS ══════════ -->
+    <div class="section" id="page-statistics">
+      <div class="pill-tabs">
+        <button class="pill-tab active" data-statistics-sub="power" onclick="showStatisticsSub('power')">Power</button>
+        <button class="pill-tab" data-statistics-sub="energy" onclick="showStatisticsSub('energy')">Energy</button>
+      </div>
+
+      <div class="subpage active" id="statistics-sub-power">
+        <div class="chart-bar">
+          <div class="date-nav">
+            <button type="button" onclick="shiftPowerDate(-1)">‹</button>
+            <input id="power-date" type="date" onchange="loadPowerChartData()">
+            <button type="button" onclick="shiftPowerDate(1)">›</button>
+          </div>
+          <select id="power-metric" class="period-select" onchange="loadPowerChartData()">
+            <option value="power">Power</option>
+            <option value="current">Current</option>
+            <option value="voltage">Voltage</option>
+          </select>
+          <select id="power-period" class="period-select" onchange="onPowerPeriodChange()">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly" selected>Monthly</option>
+          </select>
+          <button class="icon-btn" onclick="loadPowerChartData()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
+        <div class="card">
+          <div class="card-body chart-card">
+            <div class="chart-title">Power &amp; Metrics</div>
+            <div id="power-chart-sub" class="chart-sub"></div>
+            <div class="chart-wrap">
+              <canvas id="power-chart" height="280"></canvas>
+            </div>
+            <div class="chart-legend" id="power-legend">
+              <div class="leg-item" data-series="grid_power_kw" onclick="togglePowerSeries('grid_power_kw')"><div class="leg-dash" style="background:#ef5350"></div>Grid Power</div>
+              <div class="leg-item" data-series="ev_power_kw" onclick="togglePowerSeries('ev_power_kw')"><div class="leg-dash" style="background:#00bfa5"></div>EV Charge Power</div>
+              <div class="leg-item" data-series="ev_current_a" onclick="togglePowerSeries('ev_current_a')" style="display:none"><div class="leg-dash" style="background:#00bfa5"></div>EV Current</div>
+              <div class="leg-item" data-series="ev_voltage_v" onclick="togglePowerSeries('ev_voltage_v')" style="display:none"><div class="leg-dash" style="background:#7c4dff"></div>EV Voltage</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="subpage" id="statistics-sub-energy">
+        <div class="chart-bar">
+          <div class="date-nav">
+            <button type="button" onclick="shiftEnergyDate(-1)">‹</button>
+            <input id="energy-date" type="date" onchange="loadEnergyChartData()">
+            <button type="button" onclick="shiftEnergyDate(1)">›</button>
+          </div>
+          <select id="energy-period" class="period-select" onchange="loadEnergyChartData()">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly" selected>Monthly</option>
+          </select>
+          <button class="icon-btn" onclick="loadEnergyChartData()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
+        <div class="card">
+          <div class="card-body chart-card">
+            <div class="chart-title">Charge Energy</div>
+            <div id="energy-chart-sub" class="chart-sub">Daily energy delivered · kWh</div>
+            <div class="chart-wrap">
+              <canvas id="energy-chart" height="280"></canvas>
+              <div id="energy-chart-tooltip" class="chart-tooltip" role="tooltip"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ LOGS ══════════ -->
+    <div class="section" id="page-errors">
+      <div class="pill-tabs">
+        <button class="pill-tab active" data-log-sub="logs" onclick="showLogSub('logs')">Logs</button>
+        <button class="pill-tab" data-log-sub="errors" onclick="showLogSub('errors')">Errors</button>
+      </div>
+
+      <div class="subpage active" id="logs-sub-logs">
         <div class="card">
           <div class="card-header"><span class="card-title">Activity Log <span id="action-log-header-count" style="font-size:12px;background:rgba(0,191,165,.12);color:var(--teal-dk);padding:2px 8px;border-radius:10px;margin-left:6px;display:none"></span></span></div>
           <div class="card-body" style="padding:0 0 16px">
@@ -1554,83 +1643,13 @@ canvas { width: 100% !important; display: block; }
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ══════════ POWER ══════════ -->
-    <div class="section" id="page-power">
-      <div class="chart-bar">
-        <div class="date-nav">
-          <button type="button" onclick="shiftPowerDate(-1)">‹</button>
-          <input id="power-date" type="date" onchange="loadPowerChartData()">
-          <button type="button" onclick="shiftPowerDate(1)">›</button>
-        </div>
-        <select id="power-metric" class="period-select" onchange="loadPowerChartData()">
-          <option value="power">Power</option>
-          <option value="current">Current</option>
-          <option value="voltage">Voltage</option>
-        </select>
-        <select id="power-period" class="period-select" onchange="onPowerPeriodChange()">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly" selected>Monthly</option>
-        </select>
-        <button class="icon-btn" onclick="loadPowerChartData()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
-      </div>
-      <div class="card">
-        <div class="card-body chart-card">
-          <div class="chart-title">Power &amp; Metrics</div>
-          <div id="power-chart-sub" class="chart-sub"></div>
-          <div class="chart-wrap">
-            <canvas id="power-chart" height="280"></canvas>
+      <div class="subpage" id="logs-sub-errors">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Error Log</span>
           </div>
-          <div class="chart-legend" id="power-legend">
-            <div class="leg-item" data-series="grid_power_kw" onclick="togglePowerSeries('grid_power_kw')"><div class="leg-dash" style="background:#ef5350"></div>Grid Power</div>
-            <div class="leg-item" data-series="ev_power_kw" onclick="togglePowerSeries('ev_power_kw')"><div class="leg-dash" style="background:#00bfa5"></div>EV Charge Power</div>
-            <div class="leg-item" data-series="ev_current_a" onclick="togglePowerSeries('ev_current_a')" style="display:none"><div class="leg-dash" style="background:#00bfa5"></div>EV Current</div>
-            <div class="leg-item" data-series="ev_voltage_v" onclick="togglePowerSeries('ev_voltage_v')" style="display:none"><div class="leg-dash" style="background:#7c4dff"></div>EV Voltage</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ══════════ ENERGY ══════════ -->
-    <div class="section" id="page-energy">
-      <div class="chart-bar">
-        <div class="date-nav">
-          <button type="button" onclick="shiftEnergyDate(-1)">‹</button>
-          <input id="energy-date" type="date" onchange="loadEnergyChartData()">
-          <button type="button" onclick="shiftEnergyDate(1)">›</button>
-        </div>
-        <select id="energy-period" class="period-select" onchange="loadEnergyChartData()">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly" selected>Monthly</option>
-        </select>
-        <button class="icon-btn" onclick="loadEnergyChartData()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
-      </div>
-      <div class="card">
-        <div class="card-body chart-card">
-          <div class="chart-title">Charge Energy</div>
-          <div id="energy-chart-sub" class="chart-sub">Daily energy delivered · kWh</div>
-          <div class="chart-wrap">
-            <canvas id="energy-chart" height="280"></canvas>
-            <div id="energy-chart-tooltip" class="chart-tooltip" role="tooltip"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ══════════ ERRORS ══════════ -->
-    <div class="section" id="page-errors">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Error Log</span>
-        </div>
-        <div class="card-body" style="padding:0 0 16px">
+          <div class="card-body" style="padding:0 0 16px">
           <div class="table-toolbar" style="padding:16px 20px 0">
             <div class="search-wrap">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1668,34 +1687,6 @@ canvas { width: 100% !important; display: block; }
               <button class="page-btn">›</button>
             </div>
           </div>
-        </div>
-      </div>
-	    </div>
-
-    <!-- ══════════ CHARGERS ══════════ -->
-    <div class="section" id="page-chargers">
-      <div class="card" style="margin-bottom:18px">
-        <div class="card-header">
-          <span class="card-title">Chargers</span>
-          <button class="btn btn-teal btn-sm" type="button" onclick="startOnboarding()">Add Charger</button>
-        </div>
-        <div class="card-body">
-          <p style="color:var(--muted);margin-bottom:16px">Start a new onboarding session or remove chargers and pending onboarding sessions from this account.</p>
-          <div class="card" style="box-shadow:none;margin-bottom:14px">
-            <div class="card-header">
-              <span class="card-title">Current Chargers</span>
-            </div>
-            <div class="card-body">
-              <div id="charger-manager-list" class="charger-list"></div>
-            </div>
-          </div>
-          <div class="card" style="box-shadow:none">
-            <div class="card-header">
-              <span class="card-title">Pending Onboarding</span>
-            </div>
-            <div class="card-body">
-              <div id="charger-manager-onboarding-list" class="onboarding-list"></div>
-            </div>
           </div>
         </div>
       </div>
@@ -1704,12 +1695,42 @@ canvas { width: 100% !important; display: block; }
     <!-- ══════════ ACCOUNT ══════════ -->
     <div class="section" id="page-account">
       <div class="pill-tabs">
-        <button class="pill-tab active" data-account-sub="security" onclick="showAccountSub('security')">Security</button>
+        <button class="pill-tab active" data-account-sub="chargers" onclick="showAccountSub('chargers')">Chargers</button>
+        <button class="pill-tab" data-account-sub="security" onclick="showAccountSub('security')">Security</button>
         <button class="pill-tab" data-account-sub="apikeys" onclick="showAccountSub('apikeys')">API Keys</button>
       </div>
 
+      <!-- Chargers -->
+      <div class="subpage active" id="account-sub-chargers">
+        <div class="card" style="margin-bottom:18px">
+          <div class="card-header">
+            <span class="card-title">Chargers</span>
+            <button class="btn btn-teal btn-sm" type="button" onclick="startOnboarding()">Add Charger</button>
+          </div>
+          <div class="card-body">
+            <p style="color:var(--muted);margin-bottom:16px">Start a new onboarding session or remove chargers and pending onboarding sessions from this account.</p>
+            <div class="card" style="box-shadow:none;margin-bottom:14px">
+              <div class="card-header">
+                <span class="card-title">Current Chargers</span>
+              </div>
+              <div class="card-body">
+                <div id="charger-manager-list" class="charger-list"></div>
+              </div>
+            </div>
+            <div class="card" style="box-shadow:none">
+              <div class="card-header">
+                <span class="card-title">Pending Onboarding</span>
+              </div>
+              <div class="card-body">
+                <div id="charger-manager-onboarding-list" class="onboarding-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Security -->
-      <div class="subpage active" id="account-sub-security">
+      <div class="subpage" id="account-sub-security">
         <div class="account-grid">
           <div class="account-panel">
             <div class="api-key-panel-head">
@@ -1863,7 +1884,7 @@ canvas { width: 100% !important; display: block; }
         <div class="admin-grid">
           <div class="account-panel">
             <h4>Account Registration</h4>
-            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Allow new users to register accounts. Disable to lock the portal to existing accounts only.</p>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Allow new users to register accounts.</p>
             <div class="toggle-row">
               <label class="toggle">
                 <input type="checkbox" id="admin-registration-toggle" onchange="setAdminRegistrationEnabled(this.checked)">
@@ -1883,6 +1904,18 @@ canvas { width: 100% !important; display: block; }
               </label>
             </div>
             <div id="admin-email-validation-global-status" class="auth-error"></div>
+          </div>
+
+          <div class="account-panel">
+            <h4>Public API</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Allow bearer-token access to the public /api/v1 endpoints. Disable to make the public API unavailable.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="admin-public-api-toggle" onchange="setAdminPublicApiEnabled(this.checked)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="admin-public-api-status" class="auth-error"></div>
           </div>
 
           <div class="account-panel">
@@ -2109,11 +2142,17 @@ canvas { width: 100% !important; display: block; }
 // ═══════════════════════════════════════════════════
 // Navigation
 // ═══════════════════════════════════════════════════
-const pageNames = { general:'Overview', settings:'Settings', power:'Power', energy:'Energy', errors:'Errors', chargers:'Chargers', account:'Account', admin:'Admin' };
-const pagePaths = { general:'/', settings:'/settings', power:'/power', energy:'/energy', errors:'/errors', chargers:'/chargers', account:'/account', admin:'/admin' };
-const settingsSubPaths = { general:'/settings/general', modes:'/settings/modes', schedule:'/settings/schedule', idtags:'/settings/idtags', other:'/settings/other', logs:'/settings/logs' };
+const pageNames = { general:'Overview', settings:'Settings', statistics:'Statistics', errors:'Logs', account:'Account', admin:'Admin' };
+const pagePaths = { general:'/', settings:'/settings', statistics:'/statistics', errors:'/logs', account:'/account', admin:'/admin' };
+const settingsSubPaths = { general:'/settings/general', other:'/settings/control', modes:'/settings/modes', schedule:'/settings/schedule', idtags:'/settings/idtags' };
+const settingsSubAliases = { '/settings/other': 'other' };
+const statisticsSubPaths = { power:'/statistics', energy:'/statistics/energy' };
+const statisticsSubAliases = { '/power': 'power', '/energy': 'energy', '/statistics/power': 'power' };
+const logSubPaths = { logs:'/logs', errors:'/logs/errors' };
+const logSubAliases = { '/errors': 'errors', '/settings/logs': 'logs' };
 const adminSubPaths = { accounts:'/admin/accounts', chargers:'/admin/chargers', portal:'/admin/portal' };
-const accountSubPaths = { security:'/account/security', apikeys:'/account/api-keys' };
+const accountSubPaths = { chargers:'/account/chargers', security:'/account/security', apikeys:'/account/api-keys' };
+const accountSubAliases = { '/chargers': 'chargers' };
 let _modalResolve = null;
 let _modalLastFocus = null;
 
@@ -2577,6 +2616,7 @@ function applyAuthState(data, { fromLogin = false } = {}) {
   document.body.classList.toggle('is-demo', !!_authState.user?.is_demo);
   set('nav-user-name', _authState.user?.display_name || _authState.user?.email || 'Account');
   set('nav-user-role', _authState.user?.role || 'User');
+  syncLogOcppToggle();
   renderPendingOnboarding();
   renderChargerList();
 
@@ -2584,7 +2624,7 @@ function applyAuthState(data, { fromLogin = false } = {}) {
   const targetPath = (fromLogin && !wasAuthenticated && hasCharger) ? '/' : window.location.pathname;
 
   if (!hasCharger) {
-    applyRoute(targetPath, { replace: true });
+    applyRoute(targetPath === '/' ? '/account/chargers' : targetPath, { replace: true });
     closeNav();
     return;
   }
@@ -2709,7 +2749,11 @@ function renderChargerManager() {
 }
 
 async function refreshChargerPageData() {
-  if (!document.body.classList.contains('page-chargers') || !_authState.authenticated) return;
+  if (
+    !document.body.classList.contains('page-account')
+    || !document.getElementById('account-sub-chargers')?.classList.contains('active')
+    || !_authState.authenticated
+  ) return;
   _chargerPageRefreshAbort?.abort();
   const controller = new AbortController();
   _chargerPageRefreshAbort = controller;
@@ -3562,6 +3606,7 @@ async function loadAdminEmailSettings() {
     renderAdminEmailSettings(data.email_settings || {});
   } catch (err) {
     set('admin-email-validation-global-status', err.message || 'Could not load email validation settings');
+    set('admin-public-api-status', err.message || 'Could not load public API setting');
     set('admin-smtp-summary', 'SMTP status unavailable.');
     const btn = document.getElementById('admin-test-smtp');
     if (btn) btn.disabled = true;
@@ -3573,6 +3618,8 @@ function renderAdminEmailSettings(settings) {
   if (regToggle) regToggle.checked = settings.registration_enabled !== false;
   const toggle = document.getElementById('admin-email-validation-toggle');
   if (toggle) toggle.checked = settings.initial_email_validation_enabled !== false;
+  const publicApiToggle = document.getElementById('admin-public-api-toggle');
+  if (publicApiToggle) publicApiToggle.checked = settings.public_api_enabled !== false;
   const smtpConfigured = !!settings.smtp_configured;
   set(
     'admin-smtp-summary',
@@ -3622,6 +3669,25 @@ async function setAdminEmailValidationEnabled(enabled) {
   }
 }
 
+async function setAdminPublicApiEnabled(enabled) {
+  const toggle = document.getElementById('admin-public-api-toggle');
+  if (toggle) toggle.disabled = true;
+  set('admin-public-api-status', '');
+  try {
+    const data = await apiJson('/api/admin/email-settings', {
+      method: 'POST',
+      body: JSON.stringify({ public_api_enabled: !!enabled }),
+    });
+    renderAdminEmailSettings(data.email_settings || {});
+    set('admin-public-api-status', enabled ? 'Public API enabled' : 'Public API disabled');
+  } catch (err) {
+    if (toggle) toggle.checked = !enabled;
+    set('admin-public-api-status', err.message || 'Could not update public API setting');
+  } finally {
+    if (toggle) toggle.disabled = false;
+  }
+}
+
 async function testAdminSmtp() {
   const btn = document.getElementById('admin-test-smtp');
   if (btn) btn.disabled = true;
@@ -3642,7 +3708,8 @@ async function testAdminSmtp() {
 function showPage(name, options = {}) {
   let pageName = pageNames[name] ? name : 'general';
   if (pageName === 'admin' && _authState.user?.role !== 'Admin') {
-    pageName = _authState.chargers?.length ? 'general' : 'chargers';
+    pageName = _authState.chargers?.length ? 'general' : 'account';
+    if (!_authState.chargers?.length && !options.sub) options.sub = 'chargers';
   }
   const page = document.getElementById('page-' + pageName);
   if (!page) return;
@@ -3660,16 +3727,16 @@ function showPage(name, options = {}) {
   if (pageName === 'settings') {
     activateSettingsSub(options.sub || 'general');
   }
+  if (pageName === 'statistics') {
+    activateStatisticsSub(options.sub || 'power');
+  }
+  if (pageName === 'errors') {
+    activateLogSub(options.sub || 'logs');
+  }
   if (pageName === 'admin') {
     activateAdminSub(options.sub || 'accounts');
   }
-  if (pageName === 'chargers') {
-    renderChargerManager();
-    startChargerPageRefresh();
-  } else {
-    stopChargerPageRefresh();
-  }
-  if (pageName === 'power') {
+  if (pageName === 'statistics' && (options.sub || 'power') === 'power') {
     initPowerChartControls();
     loadPowerChartData();
     startPowerChartRefresh();
@@ -3677,15 +3744,17 @@ function showPage(name, options = {}) {
     stopPowerChartRefresh();
   }
   if (pageName === 'account') {
-    activateAccountSub(options.sub || 'security');
+    activateAccountSub(options.sub || 'chargers');
     loadAccountSecurityPage();
+  } else {
+    stopChargerPageRefresh();
   }
   if (pageName === 'admin') {
     loadAdminPage();
   }
   closeNav();
   if (!options.skipPush) updateRoute(pageName, options.sub);
-  if (pageName === 'energy') {
+  if (pageName === 'statistics' && (options.sub || 'power') === 'energy') {
     initEnergyChartControls();
     loadEnergyChartData();
   }
@@ -3699,6 +3768,34 @@ function showSub(name, options = {}) {
 function showAdminSub(name, options = {}) {
   showPage('admin', { sub: name, skipPush: true });
   if (!options.skipPush) updateRoute('admin', name);
+}
+
+function showStatisticsSub(name, options = {}) {
+  showPage('statistics', { sub: name, skipPush: true });
+  if (!options.skipPush) updateRoute('statistics', name);
+}
+
+function activateStatisticsSub(name) {
+  const subName = statisticsSubPaths[name] ? name : 'power';
+  const statisticsPage = document.getElementById('page-statistics');
+  statisticsPage.querySelectorAll('.subpage').forEach(s => s.classList.remove('active'));
+  statisticsPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('statistics-sub-' + subName)?.classList.add('active');
+  statisticsPage.querySelector(`.pill-tab[data-statistics-sub="${subName}"]`)?.classList.add('active');
+}
+
+function showLogSub(name, options = {}) {
+  showPage('errors', { sub: name, skipPush: true });
+  if (!options.skipPush) updateRoute('errors', name);
+}
+
+function activateLogSub(name) {
+  const subName = logSubPaths[name] ? name : 'logs';
+  const logPage = document.getElementById('page-errors');
+  logPage.querySelectorAll('.subpage').forEach(s => s.classList.remove('active'));
+  logPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('logs-sub-' + subName)?.classList.add('active');
+  logPage.querySelector(`.pill-tab[data-log-sub="${subName}"]`)?.classList.add('active');
 }
 
 function activateAdminSub(name) {
@@ -3716,12 +3813,18 @@ function showAccountSub(name, options = {}) {
 }
 
 function activateAccountSub(name) {
-  const subName = accountSubPaths[name] ? name : 'security';
+  const subName = accountSubPaths[name] ? name : 'chargers';
   const accountPage = document.getElementById('page-account');
   accountPage.querySelectorAll('.subpage').forEach(s => s.classList.remove('active'));
   accountPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('account-sub-' + subName)?.classList.add('active');
   accountPage.querySelector(`.pill-tab[data-account-sub="${subName}"]`)?.classList.add('active');
+  if (subName === 'chargers') {
+    renderChargerManager();
+    startChargerPageRefresh();
+  } else {
+    stopChargerPageRefresh();
+  }
 }
 
 function activateSettingsSub(name) {
@@ -3736,6 +3839,8 @@ function activateSettingsSub(name) {
 function updateRoute(page, sub) {
   let path;
   if (page === 'settings' && sub) path = settingsSubPaths[sub];
+  else if (page === 'statistics' && sub) path = statisticsSubPaths[sub];
+  else if (page === 'errors' && sub) path = logSubPaths[sub];
   else if (page === 'admin' && sub) path = adminSubPaths[sub];
   else if (page === 'account' && sub) path = accountSubPaths[sub];
   else path = pagePaths[page];
@@ -3750,12 +3855,22 @@ function routeFromPath(path) {
   for (const [sub, subPath] of Object.entries(settingsSubPaths)) {
     if (clean === subPath) return { page: 'settings', sub };
   }
+  if (settingsSubAliases[clean]) return { page: 'settings', sub: settingsSubAliases[clean] };
+  for (const [sub, subPath] of Object.entries(statisticsSubPaths)) {
+    if (clean === subPath) return { page: 'statistics', sub };
+  }
+  if (statisticsSubAliases[clean]) return { page: 'statistics', sub: statisticsSubAliases[clean] };
+  for (const [sub, subPath] of Object.entries(logSubPaths)) {
+    if (clean === subPath) return { page: 'errors', sub };
+  }
+  if (logSubAliases[clean]) return { page: 'errors', sub: logSubAliases[clean] };
   for (const [sub, subPath] of Object.entries(adminSubPaths)) {
     if (clean === subPath) return { page: 'admin', sub };
   }
   for (const [sub, subPath] of Object.entries(accountSubPaths)) {
     if (clean === subPath) return { page: 'account', sub };
   }
+  if (accountSubAliases[clean]) return { page: 'account', sub: accountSubAliases[clean] };
   for (const [page, pagePath] of Object.entries(pagePaths)) {
     if (clean === pagePath) return { page };
   }
@@ -3765,11 +3880,13 @@ function routeFromPath(path) {
 function applyRoute(path = window.location.pathname, options = {}) {
   const route = routeFromPath(path);
   if (route.page === 'admin' && _authState.user?.role !== 'Admin') {
-    route.page = _authState.chargers?.length ? 'general' : 'chargers';
-    route.sub = undefined;
+    route.page = _authState.chargers?.length ? 'general' : 'account';
+    route.sub = _authState.chargers?.length ? undefined : 'chargers';
   }
   showPage(route.page, { sub: route.sub, skipPush: true });
   const resolvedPath = route.page === 'settings' && route.sub ? settingsSubPaths[route.sub]
+    : route.page === 'statistics' && route.sub ? statisticsSubPaths[route.sub]
+    : route.page === 'errors' && route.sub ? logSubPaths[route.sub]
     : route.page === 'admin' && route.sub ? adminSubPaths[route.sub]
     : route.page === 'account' && route.sub ? accountSubPaths[route.sub]
     : pagePaths[route.page];
@@ -4929,7 +5046,37 @@ function renderLogResponse(entry) {
   const text = logResponseText(entry.response);
   const status = logResponseStatus(entry.response);
   const cls = entry.success ? 'badge-ok' : 'badge-err';
-  return `<span class="badge ${cls}">${escapeHtml(status || text || (entry.success ? 'Success' : 'Failed'))}</span>`;
+  const label = status || (entry.success ? 'Success' : 'Failed');
+  if (currentUserIsAdmin() && responseHasStructuredDetails(entry.response)) {
+    const json = logResponseJson(entry.response);
+    return `
+      <span class="log-response-wrap">
+        <span class="badge ${cls}">${escapeHtml(label)}</span>
+        <button
+          type="button"
+          class="log-json-btn"
+          aria-label="Copy JSON response"
+          title="Copy JSON"
+          data-json="${escapeAttr(json)}"
+          onmouseenter="showLogJsonTooltip(this, event)"
+          onmousemove="positionLogJsonTooltip(event)"
+          onmouseleave="hideLogJsonTooltip()"
+          onclick="copyLogJson(this, event)"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </span>
+    `;
+  }
+  return `<span class="badge ${cls}">${escapeHtml(status || text || label)}</span>`;
+}
+
+function logResponseJson(response) {
+  try {
+    return JSON.stringify(response, null, 2);
+  } catch (_) {
+    return String(response ?? '');
+  }
 }
 
 function logResponseText(response) {
@@ -4944,7 +5091,96 @@ function logResponseText(response) {
 
 function logResponseStatus(response) {
   if (response && typeof response === 'object' && response.status) return String(response.status);
+  if (response && typeof response === 'object' && response.response && typeof response.response === 'object' && response.response.status) {
+    return String(response.response.status);
+  }
   return '';
+}
+
+function responseHasStructuredDetails(response) {
+  return response && typeof response === 'object';
+}
+
+function currentUserIsAdmin() {
+  return _authState?.user?.role === 'Admin';
+}
+
+function logJsonTooltipEl() {
+  let el = document.getElementById('log-json-tooltip');
+  if (!el) {
+    el = document.createElement('pre');
+    el.id = 'log-json-tooltip';
+    el.className = 'log-json-tooltip';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showLogJsonTooltip(button, event) {
+  const el = logJsonTooltipEl();
+  el.textContent = button.dataset.json || '';
+  el.style.display = 'block';
+  positionLogJsonTooltip(event);
+}
+
+function positionLogJsonTooltip(event) {
+  const el = document.getElementById('log-json-tooltip');
+  if (!el || el.style.display === 'none') return;
+  const margin = 14;
+  const rect = el.getBoundingClientRect();
+  let left = event.clientX + margin;
+  let top = event.clientY + margin;
+  if (left + rect.width > window.innerWidth - margin) {
+    left = Math.max(margin, event.clientX - rect.width - margin);
+  }
+  if (top + rect.height > window.innerHeight - margin) {
+    top = Math.max(margin, window.innerHeight - rect.height - margin);
+  }
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+}
+
+function hideLogJsonTooltip() {
+  const el = document.getElementById('log-json-tooltip');
+  if (el) el.style.display = 'none';
+}
+
+async function copyLogJson(button, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const text = button.dataset.json || '';
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      fallbackCopyText(text);
+    }
+    markLogJsonCopied(button);
+  } catch (_) {
+    fallbackCopyText(text);
+    markLogJsonCopied(button);
+  }
+}
+
+function markLogJsonCopied(button) {
+  button.classList.add('copied');
+  button.title = 'Copied';
+  setTimeout(() => {
+    button.classList.remove('copied');
+    button.title = 'Copy JSON';
+  }, 1200);
+}
+
+function fallbackCopyText(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
 }
 
 function escapeAttr(value) {
@@ -5257,9 +5493,10 @@ function _updatePowerLegend(metric) {
 function startPowerChartRefresh() {
   stopPowerChartRefresh();
   _powerChartRefreshTimer = setInterval(() => {
-    const page = document.getElementById('page-power');
+    const page = document.getElementById('page-statistics');
+    const subpage = document.getElementById('statistics-sub-power');
     const period = document.getElementById('power-period')?.value || 'daily';
-    if (page?.classList.contains('active') && period === 'daily') loadPowerChartData({ silent: true });
+    if (page?.classList.contains('active') && subpage?.classList.contains('active') && period === 'daily') loadPowerChartData({ silent: true });
   }, 15000);
 }
 
@@ -5507,7 +5744,7 @@ function drawBarChart() {
 window.addEventListener('resize', () => { drawCharts(); });
 
 // ═══════════════════════════════════════════════════
-// Settings — Other tab
+// Settings — Control tab
 // ═══════════════════════════════════════════════════
 
 function _statusEl(id) { return document.getElementById(id); }
@@ -6190,7 +6427,7 @@ function _getRefreshInterval() {
 }
 
 function _logOcppEnabled() {
-  return localStorage.getItem(LOG_OCPP_KEY) === '1';
+  return currentUserIsAdmin() && localStorage.getItem(LOG_OCPP_KEY) === '1';
 }
 
 async function _doAutoRefresh() {
@@ -6213,7 +6450,13 @@ function onRefreshIntervalInput(value) {
 }
 
 function onLogOcppToggle(checked) {
+  if (!currentUserIsAdmin()) return;
   localStorage.setItem(LOG_OCPP_KEY, checked ? '1' : '0');
+}
+
+function syncLogOcppToggle() {
+  const logToggle = document.getElementById('toggle-log-ocpp');
+  if (logToggle) logToggle.checked = _logOcppEnabled();
 }
 
 // ── Boot ─────────────────────────────────────────────
@@ -6228,7 +6471,7 @@ function onLogOcppToggle(checked) {
   if (lbl) lbl.textContent = interval;
 
   const logToggle = document.getElementById('toggle-log-ocpp');
-  if (logToggle) logToggle.checked = _logOcppEnabled();
+  syncLogOcppToggle();
 
   _startRefreshTimer(interval);
 })();

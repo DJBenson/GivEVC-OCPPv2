@@ -33,6 +33,7 @@ DEMO_PASSWORD = "p@ssw0rd123"
 DEMO_CHARGE_POINT_ID = "demo-charger-001"
 DEMO_DISPLAY_NAME = "Demo Charger"
 SYSTEM_SETTING_DEMO_MODE = "demo_mode_enabled"
+SYSTEM_SETTING_PUBLIC_API = "public_api_enabled"
 PASSWORD_RESET_MINUTES = 15
 COORDINATOR_STATE_ID = "global"
 TOTP_ISSUER = "GivEVC Portal"
@@ -786,6 +787,16 @@ class AuthStore:
 
     def set_registration_enabled(self, enabled: bool) -> bool:
         self.set_system_setting("registration_enabled", "true" if enabled else "false")
+        return enabled
+
+    def is_public_api_enabled(self) -> bool:
+        value = self.get_system_setting(SYSTEM_SETTING_PUBLIC_API)
+        if value is None:
+            return True
+        return value.lower() not in {"0", "false", "no", "off"}
+
+    def set_public_api_enabled(self, enabled: bool) -> bool:
+        self.set_system_setting(SYSTEM_SETTING_PUBLIC_API, "true" if enabled else "false")
         return enabled
 
     def create_password_reset_token(self, email: str) -> str | None:
