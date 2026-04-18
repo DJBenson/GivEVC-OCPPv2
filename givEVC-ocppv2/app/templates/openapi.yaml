@@ -1,0 +1,565 @@
+openapi: 3.1.0
+info:
+  title: GivEVC OCPP Portal API
+  version: "1"
+  description: |
+    Public REST API for the GivEVC OCPP Portal. Authentication uses a long-lived
+    Bearer token (API key) created in Account Settings → API Keys.
+
+    Read-scope keys can call all GET endpoints. Write-scope keys can additionally
+    call POST command endpoints.
+
+servers:
+  - url: /api/v1
+    description: This portal
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API key generated in Account Settings → API Keys (prefix `gevc_`)
+
+  schemas:
+    Charger:
+      type: object
+      properties:
+        uuid:
+          type: string
+          description: OCPP charge point identity
+          example: EVC-123456
+        serial_number:
+          type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+          description: Manufacturer name
+        alias:
+          type: string
+          description: User-defined display name
+        online:
+          type: boolean
+        went_offline_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          example: Charging
+
+    Schedule:
+      type: object
+      properties:
+        id:
+          type: string
+          example: sched-1
+        name:
+          type: string
+          example: Octopus Go
+        enabled:
+          type: boolean
+        start:
+          type: string
+          example: "00:30"
+        end:
+          type: string
+          example: "05:30"
+        days:
+          type: array
+          items:
+            type: string
+            enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+        current_a:
+          type: integer
+          minimum: 6
+          maximum: 32
+
+    IdTag:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "04:A3:F2:1B:9C:DE:80"
+        alias:
+          type: string
+          nullable: true
+          example: Home Fob
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        enabled:
+          type: boolean
+
+    ChargingSession:
+      type: object
+      properties:
+        id:
+          type: string
+        charge_point_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        energy_kwh:
+          type: number
+          nullable: true
+        meter_start:
+          type: number
+          nullable: true
+        meter_stop:
+          type: number
+          nullable: true
+
+    MeterReading:
+      type: object
+      properties:
+        id:
+          type: integer
+        charge_point_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        measurand:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+          nullable: true
+        context:
+          type: string
+          nullable: true
+        group_index:
+          type: integer
+          nullable: true
+
+    Command:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        requires_write:
+          type: boolean
+        parameters:
+          type: array
+          items:
+            type: object
+
+    CommandResult:
+      type: object
+      properties:
+        command:
+          type: string
+        result:
+          type: object
+
+    PaginationLinks:
+      type: object
+      properties:
+        first:
+          type: string
+          nullable: true
+        last:
+          type: string
+          nullable: true
+        prev:
+          type: string
+          nullable: true
+        next:
+          type: string
+          nullable: true
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+        last_page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+
+paths:
+
+  /ev-charger:
+    get:
+      summary: List chargers
+      description: Returns all EV chargers owned by the authenticated user.
+      operationId: listChargers
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        "200":
+          description: Paginated charger list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Charger"
+                  links:
+                    $ref: "#/components/schemas/PaginationLinks"
+                  meta:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "401":
+          description: Invalid or missing API key
+
+  /ev-charger/{uuid}:
+    get:
+      summary: Get charger
+      description: Returns details and current state for a single charger.
+      operationId: getCharger
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Charger detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Charger"
+        "404":
+          description: Charger not found
+
+  /ev-charger/{uuid}/schedules:
+    get:
+      summary: List schedules
+      description: Returns all charging schedules configured on the charger.
+      operationId: listSchedules
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Schedule list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Schedule"
+        "404":
+          description: Charger not found
+
+  /ev-charger/{uuid}/id-tags:
+    get:
+      summary: List RFID tags
+      description: Returns all RFID authorisation tags configured on the charger.
+      operationId: listIdTags
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ID tag list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IdTag"
+        "404":
+          description: Charger not found
+
+  /ev-charger/{uuid}/charging-sessions:
+    get:
+      summary: List charging sessions
+      description: Returns historical charging sessions for the charger.
+      operationId: listChargingSessions
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Paginated session list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ChargingSession"
+                  links:
+                    $ref: "#/components/schemas/PaginationLinks"
+                  meta:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "404":
+          description: Charger not found
+
+  /ev-charger/{uuid}/meter-data:
+    get:
+      summary: List meter data
+      description: Returns historical meter readings for the charger.
+      operationId: listMeterData
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: measurands
+          in: query
+          schema:
+            type: string
+          description: Comma-separated list of measurand names to filter by
+        - name: meter_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by meter group index
+      responses:
+        "200":
+          description: Paginated meter readings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MeterReading"
+                  links:
+                    $ref: "#/components/schemas/PaginationLinks"
+                  meta:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "404":
+          description: Charger not found
+
+  /ev-charger/{uuid}/commands:
+    get:
+      summary: List commands
+      description: Returns all supported commands for the charger.
+      operationId: listCommands
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Command catalogue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Command"
+        "404":
+          description: Charger not found
+
+  /ev-charger/{uuid}/commands/{command_id}:
+    get:
+      summary: Get command
+      description: Returns the definition of a single command.
+      operationId: getCommand
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Command definition
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Command"
+        "404":
+          description: Charger or command not found
+
+    post:
+      summary: Run command
+      description: |
+        Sends a command to the charger. Requires a write-scope API key.
+
+        ### Commands and their request bodies
+
+        | Command | Body fields |
+        |---------|-------------|
+        | `start-charge` | _(none)_ |
+        | `stop-charge` | _(none)_ |
+        | `change-mode` | `mode`: `Eco` \| `SuperEco` \| `Boost` \| `ModbusSlave` |
+        | `adjust-charge-power-limit` | `limit`: integer 6–32 (amps) |
+        | `set-session-energy-limit` | `limit`: number 0.1–250 (kWh), omit for unlimited |
+        | `set-plug-and-go` | `enabled`: boolean |
+        | `unlock-connector` | _(none)_ |
+        | `restart-charger` | `hard_reset`: boolean (default false) |
+        | `perform-factory-reset` | _(none)_ |
+        | `read-cp-voltage-and-duty-cycle` | _(none)_ |
+        | `change-randomised-delay-duration` | `duration`: integer 600–1800 (seconds) |
+        | `adjust-suspended-state-wait-timeout` | `value`: integer 0–43200 (seconds) |
+        | `enable-front-panel-led` | `value`: boolean |
+        | `enable-local-control` | `value`: boolean |
+        | `set-max-import-capacity` | `value`: integer 40–100 (amps) |
+        | `set-schedule` | `name`: string, `schedule_id`: string (optional), `periods`: array of `{start_time, end_time, day_of_week[], current_a}` |
+        | `set-active-schedule` | `schedule_id`: string (omit to disable all) |
+        | `delete-charging-profile` | `schedule_id`: string (omit to delete all) |
+        | `add-id-tags` | `id_tags`: array of `{id, alias?, expiry_date?}` |
+        | `delete-id-tags` | `id_tags`: array of id strings |
+        | `rename-id-tag` | `tag_id`: string, `alias`: string |
+      operationId: runCommand
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - start-charge
+              - stop-charge
+              - change-mode
+              - adjust-charge-power-limit
+              - set-session-energy-limit
+              - set-plug-and-go
+              - unlock-connector
+              - restart-charger
+              - perform-factory-reset
+              - read-cp-voltage-and-duty-cycle
+              - change-randomised-delay-duration
+              - adjust-suspended-state-wait-timeout
+              - enable-front-panel-led
+              - enable-local-control
+              - set-max-import-capacity
+              - set-schedule
+              - set-active-schedule
+              - delete-charging-profile
+              - add-id-tags
+              - delete-id-tags
+              - rename-id-tag
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Command result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CommandResult"
+        "401":
+          description: Invalid or missing API key
+        "403":
+          description: Write scope required
+        "404":
+          description: Charger or command not found
+        "422":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Charger is offline or command was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"

@@ -23,17 +23,32 @@ ports_description:
   9688/tcp: "Firmware transfer port"
 map:
   - data
+  - addon_config:rw
 options:
   ocpp_port: 7655
   firmware_port: 9688
+  public_ocpp_base_url: ""
+  public_firmware_host: ""
+  public_firmware_port: 9688
   firmware_manifest_url: "https://raw.githubusercontent.com/DJBenson/giv-firmware/refs/heads/main/Firmware/EVC/manifest.json"
-  adopt_first_charger: true
-  expected_charge_point_id: ""
+  smtp_host: ""
+  smtp_port: 587
+  smtp_username: ""
+  smtp_password: ""
+  smtp_from: ""
+  smtp_tls: true
   debug_logging: false
 schema:
   ocpp_port: int
   firmware_port: int
+  public_ocpp_base_url: str
+  public_firmware_host: str
+  public_firmware_port: int
   firmware_manifest_url: str
-  adopt_first_charger: bool
-  expected_charge_point_id: str
+  smtp_host: str
+  smtp_port: int
+  smtp_username: str
+  smtp_password: password
+  smtp_from: str
+  smtp_tls: bool
   debug_logging: bool

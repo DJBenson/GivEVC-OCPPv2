@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GivEVC API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body { margin: 0; background: #fff; }
+
+    /* ── Theme toggle button ───────────────────────────────────────── */
+    #theme-bar {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 6px 16px;
+      background: #1b1b1b;
+      gap: 8px;
+    }
+    #theme-bar span {
+      font-family: sans-serif;
+      font-size: 12px;
+      color: #aaa;
+      letter-spacing: .04em;
+    }
+    #theme-toggle {
+      display: flex;
+      background: #333;
+      border-radius: 20px;
+      padding: 2px;
+      gap: 2px;
+      border: none;
+      cursor: pointer;
+    }
+    #theme-toggle button {
+      border: none;
+      background: transparent;
+      color: #aaa;
+      border-radius: 16px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    #theme-toggle button.active {
+      background: #555;
+      color: #fff;
+    }
+
+    /* ── Dark mode overrides ───────────────────────────────────────── */
+    body.dark { background: #1f2124; }
+
+    body.dark .swagger-ui,
+    body.dark .swagger-ui .wrapper,
+    body.dark .swagger-ui .opblock-tag,
+    body.dark .swagger-ui .info,
+    body.dark .swagger-ui section.models {
+      background: #1f2124;
+      color: #e0e0e0;
+    }
+
+    body.dark .swagger-ui .info .title,
+    body.dark .swagger-ui .info p,
+    body.dark .swagger-ui .info li,
+    body.dark .swagger-ui .opblock-tag,
+    body.dark .swagger-ui .opblock-tag small,
+    body.dark .swagger-ui table thead tr th,
+    body.dark .swagger-ui .parameter__name,
+    body.dark .swagger-ui .parameter__type,
+    body.dark .swagger-ui .parameter__in,
+    body.dark .swagger-ui label,
+    body.dark .swagger-ui .model-title,
+    body.dark .swagger-ui .model,
+    body.dark .swagger-ui .prop-type,
+    body.dark .swagger-ui .prop-format,
+    body.dark .swagger-ui table.model tr.property-row td,
+    body.dark .swagger-ui .response-col_status,
+    body.dark .swagger-ui .response-col_description,
+    body.dark .swagger-ui .tab li,
+    body.dark .swagger-ui .opblock .opblock-summary-description,
+    body.dark .swagger-ui .opblock .opblock-summary-path,
+    body.dark .swagger-ui .opblock .opblock-summary-path__deprecated,
+    body.dark .swagger-ui .scheme-container,
+    body.dark .swagger-ui select {
+      color: #e0e0e0;
+    }
+
+    body.dark .swagger-ui .opblock {
+      background: #2a2d31;
+      border-color: #3a3d42;
+    }
+    body.dark .swagger-ui .opblock .opblock-summary {
+      background: #2a2d31;
+      border-color: #3a3d42;
+    }
+    body.dark .swagger-ui .opblock.opblock-get .opblock-summary-method { background: #1d6fa5; }
+    body.dark .swagger-ui .opblock.opblock-post .opblock-summary-method { background: #1a6e3a; }
+    body.dark .swagger-ui .opblock.opblock-delete .opblock-summary-method { background: #8b2020; }
+    body.dark .swagger-ui .opblock.opblock-put .opblock-summary-method { background: #7a5c10; }
+
+    body.dark .swagger-ui .opblock-body,
+    body.dark .swagger-ui .opblock-description-wrapper,
+    body.dark .swagger-ui .responses-wrapper,
+    body.dark .swagger-ui .parameters-container,
+    body.dark .swagger-ui .response-controls {
+      background: #23262a;
+    }
+
+    body.dark .swagger-ui input[type=text],
+    body.dark .swagger-ui input[type=password],
+    body.dark .swagger-ui input[type=search],
+    body.dark .swagger-ui textarea,
+    body.dark .swagger-ui select {
+      background: #2e3136;
+      border-color: #4a4d52;
+      color: #e0e0e0;
+    }
+
+    body.dark .swagger-ui .btn {
+      background: #2e3136;
+      color: #e0e0e0;
+      border-color: #4a4d52;
+    }
+    body.dark .swagger-ui .btn.execute {
+      background: #1d6fa5;
+      border-color: #1d6fa5;
+      color: #fff;
+    }
+    body.dark .swagger-ui .btn.authorize {
+      background: transparent;
+      border-color: #61affe;
+      color: #61affe;
+    }
+
+    body.dark .swagger-ui .scheme-container {
+      background: #23262a;
+      box-shadow: none;
+      border-bottom: 1px solid #3a3d42;
+    }
+
+    body.dark .swagger-ui section.models {
+      border-color: #3a3d42;
+    }
+    body.dark .swagger-ui section.models .model-container {
+      background: #2a2d31;
+      border-color: #3a3d42;
+    }
+    body.dark .swagger-ui .model-box {
+      background: #23262a;
+    }
+
+    body.dark .swagger-ui hr,
+    body.dark .swagger-ui .opblock-tag {
+      border-color: #3a3d42;
+    }
+
+    body.dark .swagger-ui .markdown p,
+    body.dark .swagger-ui .markdown li,
+    body.dark .swagger-ui .renderedMarkdown p,
+    body.dark .swagger-ui .renderedMarkdown li,
+    body.dark .swagger-ui .renderedMarkdown td,
+    body.dark .swagger-ui .renderedMarkdown th {
+      color: #c8ccd0;
+    }
+
+    body.dark .swagger-ui .renderedMarkdown table {
+      border-color: #3a3d42;
+    }
+    body.dark .swagger-ui .renderedMarkdown td,
+    body.dark .swagger-ui .renderedMarkdown th {
+      border-color: #3a3d42;
+    }
+
+    body.dark .swagger-ui .highlight-code > .microlight {
+      background: #161819 !important;
+    }
+
+    body.dark .swagger-ui .copy-to-clipboard {
+      background: #2e3136;
+    }
+
+    body.dark .swagger-ui .topbar { display: none; }
+  </style>
+</head>
+<body>
+  <div id="theme-bar">
+    <span>Theme</span>
+    <div id="theme-toggle">
+      <button data-theme="light">Light</button>
+      <button data-theme="dark">Dark</button>
+      <button data-theme="system">System</button>
+    </div>
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    const STORAGE_KEY = 'givevc-api-docs-theme';
+
+    function applyTheme(theme) {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const useDark = theme === 'dark' || (theme === 'system' && prefersDark);
+      document.body.classList.toggle('dark', useDark);
+      document.querySelectorAll('#theme-toggle button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.theme === theme);
+      });
+    }
+
+    function setTheme(theme) {
+      localStorage.setItem(STORAGE_KEY, theme);
+      applyTheme(theme);
+    }
+
+    const savedTheme = localStorage.getItem(STORAGE_KEY) || 'system';
+    applyTheme(savedTheme);
+
+    document.querySelectorAll('#theme-toggle button').forEach(btn => {
+      btn.addEventListener('click', () => setTheme(btn.dataset.theme));
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if ((localStorage.getItem(STORAGE_KEY) || 'system') === 'system') applyTheme('system');
+    });
+
+    SwaggerUIBundle({
+      url: "/api/v1/openapi.yaml",
+      dom_id: "#swagger-ui",
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: "BaseLayout",
+      deepLinking: true,
+    });
+  </script>
+</body>
+</html>

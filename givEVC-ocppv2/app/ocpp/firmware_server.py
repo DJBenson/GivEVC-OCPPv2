@@ -113,6 +113,9 @@ class FirmwareTransferServer:
         self._startup_error: Exception | None = None
         self._port: int | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._active_downloads_lock = threading.Lock()
+        self._active_downloads: dict[int, dict[str, Any]] = {}
+        self._cancelled_sessions: set[int] = set()
 
     def set_event_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Attach a sync callback for transfer events (called from the server thread)."""
@@ -166,6 +169,48 @@ class FirmwareTransferServer:
         self._startup_complete.clear()
         self._startup_error = None
         self._port = None
+        with self._active_downloads_lock:
+            self._active_downloads.clear()
+            self._cancelled_sessions.clear()
+
+    def cancel_download(self, filename: str | None = None, remote: str | None = None) -> int:
+        """Cancel active firmware downloads matching the filename and remote endpoint."""
+        safe_filename = Path(str(filename or "")).name if filename else None
+        remote_value = str(remote or "").strip()
+        remote_host = remote_value.split(":", 1)[0] if remote_value else ""
+        targets: list[tuple[int, dict[str, Any]]] = []
+
+        with self._active_downloads_lock:
+            for session_id, info in self._active_downloads.items():
+                info_filename = Path(str(info.get("filename") or "")).name
+                info_remote = str(info.get("remote") or "")
+                info_host = info_remote.split(":", 1)[0] if info_remote else ""
+                filename_matches = not safe_filename or info_filename == safe_filename
+                remote_matches = not remote_value or info_remote == remote_value or info_host == remote_host
+                if filename_matches and remote_matches:
+                    self._cancelled_sessions.add(session_id)
+                    targets.append((session_id, dict(info)))
+
+        for session_id, info in targets:
+            sock = info.get("sock")
+            if isinstance(sock, socket.socket):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            self._emit_event({
+                "event": "transfer_cancel_requested",
+                "remote": info.get("remote"),
+                "trace": info.get("trace"),
+                "filename": info.get("filename"),
+                "session_id": session_id,
+            })
+
+        return len(targets)
 
     # ── Internal ─────────────────────────────────────────────────────────
 
@@ -189,13 +234,11 @@ class FirmwareTransferServer:
         })
 
     def _resolve_firmware_path(self, filename: str) -> Path | None:
-        safe_name = Path(filename.lstrip("/\\")).as_posix()
-        if ".." in safe_name.split("/"):
+        safe_name = Path(filename).name
+        if not safe_name or safe_name in {".", ".."}:
             return None
-        for candidate in [self.root / safe_name, self.root / Path(safe_name).name]:
-            if candidate.is_file():
-                return candidate
-        return None
+        candidate = self.root / safe_name
+        return candidate if candidate.is_file() else None
 
     @staticmethod
     def _register_active_request(charger_ip: str, filename: str, session_id: int) -> int | None:
@@ -212,6 +255,31 @@ class FirmwareTransferServer:
             if ACTIVE_REQUESTS.get(key) == session_id:
                 del ACTIVE_REQUESTS[key]
 
+    def _register_active_download(
+        self,
+        session_id: int,
+        sock: socket.socket,
+        filename: str,
+        remote: str,
+        trace_label: str,
+    ) -> None:
+        with self._active_downloads_lock:
+            self._active_downloads[session_id] = {
+                "sock": sock,
+                "filename": Path(str(filename)).name,
+                "remote": remote,
+                "trace": trace_label,
+            }
+
+    def _unregister_active_download(self, session_id: int) -> None:
+        with self._active_downloads_lock:
+            self._active_downloads.pop(session_id, None)
+            self._cancelled_sessions.discard(session_id)
+
+    def _session_cancelled(self, session_id: int) -> bool:
+        with self._active_downloads_lock:
+            return session_id in self._cancelled_sessions
+
     def _handle_download(
         self,
         conn: _JsonSocketConnection,
@@ -219,17 +287,20 @@ class FirmwareTransferServer:
         request: dict[str, Any],
         *,
         trace_label: str,
+        session_id: int,
     ) -> None:
         sock = conn.sock
         requested_filename = str(request.get("filename", ""))
         pack_len = max(1, int(request.get("packlen", DEFAULT_CHUNK_SIZE) or DEFAULT_CHUNK_SIZE))
         file_path = self._resolve_firmware_path(requested_filename)
+        cancelled = False
 
         if file_path is None:
             self._emit_event({"event": "file_not_found", "remote": remote, "requested_filename": requested_filename, "trace": trace_label})
             self._send_json(sock, {"res": "File does not exist"}, remote=remote, trace_label=trace_label)
             return
 
+        self._register_active_download(session_id, sock, file_path.name, remote, trace_label)
         file_size = file_path.stat().st_size
         pack_num = math.ceil(file_size / pack_len)
 
@@ -246,8 +317,17 @@ class FirmwareTransferServer:
         try:
             with file_path.open("rb") as f:
                 while True:
+                    if self._session_cancelled(session_id):
+                        cancelled = True
+                        self._emit_event({"event": "transfer_cancelled", "remote": remote, "trace": trace_label, "filename": file_path.name})
+                        return
+
                     result = conn.recv_json()
                     if result is None:
+                        if self._session_cancelled(session_id):
+                            cancelled = True
+                            self._emit_event({"event": "transfer_cancelled", "remote": remote, "trace": trace_label, "filename": file_path.name})
+                            return
                         self._emit_event({"event": "checksum_missing", "remote": remote, "trace": trace_label, "filename": file_path.name})
                         return
 
@@ -279,13 +359,24 @@ class FirmwareTransferServer:
                         self._emit_event({"event": "chunk_read_error", "remote": remote, "trace": trace_label, "packsn": pack_sn})
                         return
 
+                    if self._session_cancelled(session_id):
+                        cancelled = True
+                        self._emit_event({"event": "transfer_cancelled", "remote": remote, "trace": trace_label, "filename": file_path.name})
+                        return
+
                     sock.sendall(data)
                     bytes_sent += len(data)
                     self._emit_event({"event": "chunk_sent", "remote": remote, "trace": trace_label, "packsn": pack_sn, "bytes": len(data)})
         except OSError as err:
-            self._emit_event({"event": "client_error", "remote": remote, "trace": trace_label, "error": str(err)})
+            if self._session_cancelled(session_id):
+                cancelled = True
+                self._emit_event({"event": "transfer_cancelled", "remote": remote, "trace": trace_label, "filename": file_path.name})
+            else:
+                self._emit_event({"event": "client_error", "remote": remote, "trace": trace_label, "error": str(err)})
         finally:
-            self._emit_event({"event": "file_sent", "remote": remote, "trace": trace_label, "filename": file_path.name, "bytes": bytes_sent})
+            if not cancelled:
+                self._emit_event({"event": "file_sent", "remote": remote, "trace": trace_label, "filename": file_path.name, "bytes": bytes_sent})
+            self._unregister_active_download(session_id)
 
     def _handle_upload(
         self,
@@ -361,9 +452,11 @@ class FirmwareTransferServer:
                 self._emit_event({"event": "overlapping_request", "remote": remote, "trace": trace_label, "filename": requested_filename, "previous_session_id": previous_session_id})
 
             if upload == "1":
-                self._handle_upload(json_conn, remote, request, trace_label=trace_label)
+                self._emit_event({"event": "upload_rejected", "remote": remote, "trace": trace_label, "filename": requested_filename})
+                self._send_json(conn, {"res": "Upload not permitted"}, remote=remote, trace_label=trace_label)
+                return
             else:
-                self._handle_download(json_conn, remote, request, trace_label=trace_label)
+                self._handle_download(json_conn, remote, request, trace_label=trace_label, session_id=session_id)
 
         except Exception as err:
             self._emit_event({"event": "client_error", "remote": remote, "trace": trace_label, "error": str(err)})

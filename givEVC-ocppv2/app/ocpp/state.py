@@ -22,6 +22,9 @@ class ChargerState:
     firmware_update_target_version: str | None = None
     firmware_update_previous_version: str | None = None
     firmware_update_started_at: datetime | None = None
+    firmware_update_download_completed_at: datetime | None = None
+    firmware_update_install_started_at: datetime | None = None
+    firmware_update_expected_reconnect_by: datetime | None = None
     firmware_update_completed_at: datetime | None = None
     firmware_update_failure_reason: str | None = None
     firmware_server_host: str | None = None
@@ -31,6 +34,7 @@ class ChargerState:
     selected_firmware_file: str | None = None
     available_firmware_files: list[str] = field(default_factory=list)
     last_update_firmware_request: dict[str, Any] | None = None
+    firmware_transfer_progress: dict[str, Any] | None = None
     charge_point_serial_number: str | None = None
     charge_box_serial_number: str | None = None
     websocket_remote_address: str | None = None
