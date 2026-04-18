@@ -4,6 +4,15 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>GivEVC — OCPP v2</title>
+<script>
+(() => {
+  try {
+    const pref = localStorage.getItem('authTheme') || localStorage.getItem('theme') || 'system';
+    const dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (dark) document.documentElement.classList.add('dark');
+  } catch (_) {}
+})();
+</script>
 <style>
 /* ─── Reset & tokens ─────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -33,7 +42,196 @@ body {
 }
 
 /* ─── Layout shell ───────────────────────────────── */
-.shell { display: flex; min-height: 100vh; }
+.shell { display: none; min-height: 100vh; }
+body.auth-app .shell { display: flex; }
+.auth-screen {
+  min-height: 100vh; display: none; place-items: center; padding: 24px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+}
+body.auth-login .auth-screen { display: grid; }
+.auth-panel {
+  width: min(460px, 100%); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 28px;
+}
+.auth-brand { display:flex; align-items:center; gap:12px; margin-bottom:22px; }
+.auth-brand .nav-brand-icon { position: static; flex-shrink:0; }
+.auth-title { font-size: 24px; font-weight: 750; letter-spacing: 0; }
+.auth-subtitle { color: var(--muted); margin: -10px 0 22px; }
+.auth-tabs { display:flex; gap:8px; margin-bottom:18px; }
+body.first-user-registration .auth-tabs { display:none; }
+.auth-tab {
+  flex:1; border:1px solid var(--border); background:var(--surface); color:var(--muted);
+  border-radius:8px; padding:10px; font:inherit; font-weight:700; cursor:pointer;
+}
+.auth-tab.active { background: var(--teal-lt); border-color: var(--teal); color: var(--teal-dk); }
+.auth-theme-toggle {
+  display:flex; gap:6px; padding:4px; border:1px solid var(--border);
+  border-radius:10px; background:var(--bg); margin-bottom:18px;
+}
+.auth-theme-toggle button {
+  flex:1; border:0; border-radius:7px; padding:8px 10px; background:transparent;
+  color:var(--muted); font:inherit; font-weight:700; cursor:pointer;
+}
+.auth-theme-toggle button.active {
+  background:var(--surface); color:var(--teal-dk); box-shadow:0 1px 4px rgba(0,0,0,.08);
+}
+.auth-form { display:none; }
+.auth-form.active { display:block; }
+.hidden { display:none !important; }
+.auth-notice {
+  border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:14px;
+  background:var(--bg); color:var(--muted); font-size:13px;
+}
+.auth-notice strong { color:var(--text); }
+.totp-qr {
+  display:flex; justify-content:center; align-items:center; min-height:180px;
+  padding:14px; margin-bottom:14px; border:1px solid var(--border);
+  border-radius:10px; background:#fff;
+}
+.totp-qr:empty { display:none; }
+.totp-qr svg { width:180px; height:180px; display:block; }
+.form-field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+.form-field label { font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+.form-field input,
+.form-field select {
+  border:1px solid var(--border); border-radius:8px; padding:12px 13px;
+  font:inherit; background:var(--surface); color:var(--text); outline:none;
+}
+.form-field input:focus,
+.form-field select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(0,191,165,.12); }
+.form-actions { display:flex; justify-content:flex-end; align-items:center; gap:10px; flex-wrap:wrap; }
+.auth-error { min-height:22px; color:var(--err); font-size:13px; margin-top:10px; }
+.no-charger-dashboard { display:none; }
+body.no-charger .content > .section { display:none !important; }
+body.no-charger.page-account #page-account,
+body.no-charger.page-chargers #page-chargers,
+body.no-charger.page-admin #page-admin { display:block !important; }
+body.no-charger .no-charger-dashboard { display:block; }
+body.no-charger.page-account .no-charger-dashboard,
+body.no-charger.page-chargers .no-charger-dashboard,
+body.no-charger.page-admin .no-charger-dashboard { display:none; }
+body.no-charger .nav-status,
+body.no-charger .charger-nav-link { display:none; }
+body:not(.is-admin) .admin-nav-link { display:none !important; }
+body:not(.is-admin) .admin-only { display:none !important; }
+.empty-dashboard {
+  display:grid; grid-template-columns:minmax(0, 1.2fr) minmax(320px, .8fr); gap:18px;
+}
+.empty-hero {
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); padding:32px; min-height:280px;
+  display:flex; flex-direction:column; justify-content:center; align-items:flex-start;
+}
+.empty-hero h2 { font-size:28px; margin-bottom:10px; letter-spacing:0; }
+.empty-hero p { color:var(--muted); max-width:620px; margin-bottom:22px; font-size:16px; }
+.onboarding-list { display:flex; flex-direction:column; gap:10px; }
+.onboarding-item {
+  border:1px solid var(--border); border-radius:8px; padding:14px; background:var(--surface);
+  display:grid; gap:10px;
+}
+.credential-box {
+  border:1px solid var(--border); border-radius:8px; padding:12px;
+  background:var(--bg); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size:13px; word-break:break-all;
+}
+.credential-label { font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:800; letter-spacing:.08em; margin-bottom:4px; }
+.onboarding-modal-backdrop {
+  position:fixed; inset:0; background:rgba(10,12,16,.55); z-index:250;
+  display:none; align-items:center; justify-content:center; padding:20px;
+}
+.onboarding-modal-backdrop.open { display:flex; }
+.onboarding-modal {
+  width:min(620px, 100%); background:var(--surface); border-radius:var(--radius);
+  border:1px solid var(--border); box-shadow:0 20px 60px rgba(0,0,0,.24); padding:24px;
+}
+.onboarding-modal h3 { font-size:20px; margin-bottom:8px; }
+.onboarding-modal p { color:var(--muted); margin-bottom:16px; }
+.account-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.account-panel {
+  border:1px solid var(--border); border-radius:8px; padding:16px; background:var(--surface);
+}
+.account-panel h4 { font-size:15px; margin-bottom:10px; }
+.security-status { color:var(--muted); font-size:13px; margin-bottom:12px; }
+.setup-secret { display:grid; gap:10px; margin:12px 0; }
+.api-key-panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.api-key-panel-head h4 { margin-bottom:0; }
+.api-key-list { display:grid; gap:10px; }
+.api-key-item {
+  border:1px solid var(--border); border-radius:8px; padding:12px;
+  background:var(--bg); display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.api-key-item > div { min-width:0; }
+.api-key-item .btn { flex:0 0 auto; }
+.api-key-name { font-weight:700; color:var(--text); }
+.api-key-meta { color:var(--muted); font-size:12px; margin-top:3px; }
+.api-key-secret { display:grid; gap:8px; margin-top:4px; }
+.admin-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:14px; }
+.admin-result {
+  min-height:78px; border:1px solid var(--border); border-radius:8px; padding:12px;
+  background:var(--bg); color:var(--muted); font-size:13px; margin:12px 0;
+}
+.admin-result strong { color:var(--text); }
+.admin-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.admin-list-head {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  color:var(--muted); font-size:12px; margin:4px 0 10px;
+}
+.admin-scroll-list { max-height:360px; overflow:auto; padding-right:4px; }
+.autocomplete-wrap { position:relative; }
+.autocomplete-wrap,
+.autocomplete-wrap input { width:100%; }
+.autocomplete-menu {
+  position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:20;
+  display:none; max-height:240px; overflow:auto; background:var(--surface);
+  border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); padding:6px;
+}
+.autocomplete-menu.open { display:block; }
+.autocomplete-option {
+  width:100%; border:0; background:transparent; color:var(--text); text-align:left;
+  padding:10px; border-radius:6px; cursor:pointer; font:inherit;
+  display:grid; gap:2px;
+}
+.autocomplete-option:hover,
+.autocomplete-option:focus { background:var(--teal-lt); outline:none; }
+.autocomplete-option strong { font-size:13px; }
+.autocomplete-option span { color:var(--muted); font-size:12px; }
+.autocomplete-empty { color:var(--muted); font-size:12px; padding:10px; }
+.charger-list { display:flex; flex-direction:column; gap:10px; }
+.charger-item {
+  border:1px solid var(--border); border-radius:8px; padding:14px; background:var(--surface);
+  display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
+}
+.charger-name { font-weight:700; }
+.charger-meta { color:var(--muted); font-size:12px; margin-top:2px; }
+.charger-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.admin-charger-option {
+  width:100%; appearance:none; font:inherit; color:var(--text); text-align:left; cursor:pointer;
+  transition:background .15s, border-color .15s, box-shadow .15s;
+}
+.admin-charger-option:hover,
+.admin-charger-option:focus {
+  background:var(--teal-lt); border-color:rgba(0,191,165,.35); outline:none;
+}
+.admin-charger-option.selected {
+  background:var(--teal-lt); border-color:var(--teal);
+}
+.admin-charger-option .admin-charger-cta {
+  flex:0 0 auto; border-radius:8px; padding:5px 12px; font-size:12px; font-weight:700;
+  background:var(--teal); color:#fff;
+}
+.charger-active-badge {
+  background:var(--teal-lt); color:var(--teal-dk); border-radius:999px;
+  font-size:12px; font-weight:800; padding:7px 11px;
+}
+.charger-pill {
+  border-radius:999px; font-size:12px; font-weight:800; padding:7px 11px;
+  background:var(--field); color:var(--muted);
+}
+.charger-pill.online { background:rgba(102,187,106,.15); color:#388e3c; }
+.charger-pill.offline { background:var(--field); color:var(--muted); }
+.charger-pill.charging { background:var(--teal-lt); color:var(--teal-dk); }
+.charger-pill.warn { background:rgba(255,107,53,.12); color:var(--warn); }
+.charger-pill.error { background:rgba(239,83,80,.12); color:var(--err); }
 
 /* ─── Sidebar nav ────────────────────────────────── */
 .nav {
@@ -78,9 +276,24 @@ body {
 .nav-link.active { color: #fff; background: rgba(0,191,165,.15); border-left-color: var(--teal); }
 
 .nav-footer {
-  padding: 16px; border-top: 1px solid rgba(255,255,255,.08);
-  font-size: 11px; color: rgba(255,255,255,.3); text-align: center;
+  padding: 14px 16px; border-top: 1px solid rgba(255,255,255,.08);
+  display: grid; gap: 10px;
 }
+.nav-user { min-width: 0; }
+.nav-user-name {
+  color: rgba(255,255,255,.88); font-size: 13px; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nav-user-role { color: rgba(255,255,255,.42); font-size: 11px; font-weight: 700; margin-top: 1px; }
+.nav-actions { display: grid; gap: 6px; }
+.nav-action {
+  width: 100%; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.78); border-radius: 8px; padding: 8px 10px;
+  font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; text-align: left;
+  transition: all .15s;
+}
+.nav-action:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-version { font-size: 10px; color: rgba(255,255,255,.28); text-align: center; margin-top: 2px; }
 
 /* ─── Main area ──────────────────────────────────── */
 .main { margin-left: var(--nav-w); flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -315,6 +528,19 @@ body.modal-open { overflow: hidden; }
 .app-modal-confirm:hover { background: var(--teal-dk); }
 .app-modal-confirm.warn { background: var(--warn); border-color: var(--warn); }
 .app-modal-confirm.danger { background: var(--err); border-color: var(--err); }
+.firmware-progress-modal { width: min(520px, 100%); }
+.firmware-progress-meta { display: grid; gap: 6px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.firmware-progress-bar {
+  width: 100%; height: 12px; border-radius: 999px; overflow: hidden;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.firmware-progress-fill {
+  height: 100%; width: 0%; border-radius: inherit; background: var(--teal);
+  transition: width .2s ease;
+}
+.firmware-progress-fill.err { background: var(--err); }
+.firmware-progress-detail { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.firmware-progress-status { font-weight: 700; color: var(--text); }
 
 .sched-fields { display: grid; gap: 16px; }
 .field-group label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; display: block; margin-bottom: 6px; }
@@ -404,9 +630,14 @@ body.modal-open { overflow: hidden; }
 }
 .settings-card > .btn,
 .settings-card > .toggle-row { margin-top: 10px; }
-.settings-card .card-footer { margin-top: auto; }
-
-.settings-status { font-size: 11px; margin-top: 6px; min-height: 14px; }
+	.settings-card .card-footer { margin-top: auto; }
+	.settings-offline-banner {
+	  display: none; margin-bottom: 16px; padding: 10px 16px;
+	  background: rgba(239,83,80,.1); border: 1px solid rgba(239,83,80,.3);
+	  border-radius: 8px; font-size: 13px; color: var(--err);
+	}
+	
+	.settings-status { font-size: 11px; margin-top: 6px; min-height: 14px; }
 .settings-card > .settings-status {
   position: absolute; left: 20px; right: 20px; bottom: 4px;
   margin-top: 0; min-height: 14px; line-height: 14px;
@@ -499,6 +730,8 @@ canvas { width: 100% !important; display: block; }
   .general-grid { grid-template-columns: 1fr; }
   .general-grid .span2 { grid-column: span 1; }
   .schedule-layout { grid-template-columns: 1fr; }
+  .account-grid { grid-template-columns: 1fr; }
+  .admin-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
   .content { padding: 16px; }
@@ -515,6 +748,107 @@ canvas { width: 100% !important; display: block; }
 </style>
 </head>
 <body>
+<div class="auth-screen" id="auth-screen">
+  <div class="auth-panel">
+    <div class="auth-brand">
+      <div class="nav-brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M13 2L4.09 12.26a1 1 0 0 0 .83 1.62L12 13l-1 9 8.91-10.26a1 1 0 0 0-.83-1.62L12 11l1-9z"/></svg>
+      </div>
+      <div>
+        <div class="auth-title">GivEVC Portal</div>
+        <div class="auth-subtitle">Sign in to manage your chargers.</div>
+      </div>
+    </div>
+    <div class="auth-tabs">
+      <button id="auth-tab-login" class="auth-tab active" type="button" onclick="showAuthMode('login')">Log in</button>
+      <button id="auth-tab-register" class="auth-tab" type="button" onclick="showAuthMode('register')">Register</button>
+    </div>
+    <div class="auth-theme-toggle" role="group" aria-label="Theme">
+      <button id="auth-theme-light" type="button" onclick="setPreAuthTheme('light')">Light</button>
+      <button id="auth-theme-dark" type="button" onclick="setPreAuthTheme('dark')">Dark</button>
+      <button id="auth-theme-system" type="button" onclick="setPreAuthTheme('system')">System</button>
+    </div>
+    <form id="auth-form-login" class="auth-form active" onsubmit="submitAuth(event, 'login')">
+      <div class="form-field">
+        <label for="login-email">Email</label>
+        <input id="login-email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="form-field">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <div id="login-otp-field" class="form-field hidden">
+        <label for="login-otp">Authentication Code</label>
+        <input id="login-otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      </div>
+      <button class="btn btn-teal" type="submit" style="width:100%">Log in</button>
+      <div style="text-align:right;margin-top:8px">
+        <a href="#" id="forgot-password-link" onclick="showForgotPasswordMode(event)" style="font-size:12px;color:var(--muted);text-decoration:none">Forgot password?</a>
+      </div>
+    </form>
+    <form id="auth-form-register" class="auth-form" onsubmit="submitAuth(event, 'register')">
+      <div id="register-role-notice" class="auth-notice hidden">
+        This is the first account, so it will be created as <strong>Admin</strong>.
+      </div>
+      <div class="form-field">
+        <label for="register-name">Name</label>
+        <input id="register-name" name="display_name" type="text" autocomplete="name">
+      </div>
+      <div class="form-field">
+        <label for="register-email">Email</label>
+        <input id="register-email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="form-field">
+        <label for="register-password">Password</label>
+        <input id="register-password" name="password" type="password" autocomplete="new-password" minlength="10" required>
+      </div>
+      <div class="form-field">
+        <label for="register-password-confirm">Confirm Password</label>
+        <input id="register-password-confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="10" required>
+      </div>
+      <button class="btn btn-teal" type="submit" style="width:100%">Create account</button>
+    </form>
+    <form id="auth-form-email-verify" class="auth-form" onsubmit="submitEmailVerification(event)">
+      <div class="auth-notice">
+        We sent a 6 digit code to <strong id="email-verify-address"></strong>.
+      </div>
+      <div class="form-field">
+        <label for="email-verify-otp">Verification Code</label>
+        <input id="email-verify-otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="cancelEmailVerification()">Cancel</button>
+        <button id="email-verify-resend" class="btn btn-outline" type="button" onclick="resendEmailVerification()">Resend</button>
+        <button class="btn btn-teal" type="submit">Confirm</button>
+      </div>
+    </form>
+    <form id="auth-form-forgot-password" class="auth-form" onsubmit="submitForgotPassword(event)">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Enter your email address and we'll send you a link to reset your password.</p>
+      <div class="form-field">
+        <label for="forgot-password-email">Email</label>
+        <input id="forgot-password-email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="cancelForgotPassword()">Cancel</button>
+        <button class="btn btn-teal" type="submit">Send reset link</button>
+      </div>
+    </form>
+    <form id="auth-form-reset-password" class="auth-form" onsubmit="submitResetPassword(event)">
+      <div class="auth-notice">Enter your new password below.</div>
+      <div class="form-field">
+        <label for="reset-password-new">New Password</label>
+        <input id="reset-password-new" name="password" type="password" autocomplete="new-password" minlength="10" required>
+      </div>
+      <div class="form-field">
+        <label for="reset-password-confirm">Confirm Password</label>
+        <input id="reset-password-confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="10" required>
+      </div>
+      <button class="btn btn-teal" type="submit" style="width:100%">Reset password</button>
+    </form>
+    <div id="auth-error" class="auth-error"></div>
+  </div>
+</div>
+
 <div class="shell">
 
 <!-- ── Sidebar ── -->
@@ -538,30 +872,50 @@ canvas { width: 100% !important; display: block; }
   </div>
 
   <div class="nav-links">
-    <button class="nav-link active" data-page="general" onclick="showPage('general')">
+    <button class="nav-link charger-nav-link active" data-page="general" onclick="showPage('general')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       Overview
     </button>
-    <button class="nav-link" data-page="settings" onclick="showPage('settings')">
+    <button class="nav-link charger-nav-link" data-page="settings" onclick="showPage('settings')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M2 12H4M20 12h2"/></svg>
       Settings
     </button>
-    <button class="nav-link" data-page="power" onclick="showPage('power')">
+    <button class="nav-link charger-nav-link" data-page="power" onclick="showPage('power')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       Power
     </button>
-    <button class="nav-link" data-page="energy" onclick="showPage('energy')">
+    <button class="nav-link charger-nav-link" data-page="energy" onclick="showPage('energy')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h2l2 6 2-9 2 6 1-3h1"/></svg>
       Energy
     </button>
-    <button class="nav-link" data-page="errors" onclick="showPage('errors')">
+    <button class="nav-link charger-nav-link" data-page="errors" onclick="showPage('errors')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
       Errors
-      <span style="margin-left:auto;background:var(--err);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">35</span>
+    </button>
+    <button class="nav-link" data-page="chargers" onclick="showPage('chargers')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 17h10M9 17v3M15 17v3"/><rect x="5" y="4" width="14" height="10" rx="2"/><path d="M8 8h8"/></svg>
+      Chargers
+    </button>
+    <button class="nav-link" data-page="account" onclick="showPage('account')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+      Account
+    </button>
+    <button class="nav-link admin-nav-link" data-page="admin" onclick="showPage('admin')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-3z"/><path d="M9 12l2 2 4-5"/></svg>
+      Admin
     </button>
   </div>
 
-  <div class="nav-footer">GivEVC OCPPv2 · v0.1.0</div>
+  <div class="nav-footer">
+    <div class="nav-user">
+      <div id="nav-user-name" class="nav-user-name">Account</div>
+      <div id="nav-user-role" class="nav-user-role">User</div>
+    </div>
+    <div class="nav-actions">
+      <button class="nav-action" type="button" onclick="logout()">Log out</button>
+    </div>
+    <div class="nav-version">GivEVC OCPPv2 · v0.1.0</div>
+  </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" onclick="closeNav()"></div>
 
@@ -580,6 +934,31 @@ canvas { width: 100% !important; display: block; }
   </header>
 
   <div class="content">
+    <div class="no-charger-dashboard" id="no-charger-dashboard">
+      <div class="empty-dashboard">
+        <div class="empty-hero">
+          <h2>Add your first charger</h2>
+          <p>Create an onboarding session, then enter the generated OCPP endpoint and password into your charger local admin portal.</p>
+          <button class="btn btn-teal" type="button" onclick="startOnboarding()">Add Charger</button>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Pending Onboarding</span>
+          </div>
+          <div class="card-body">
+            <div id="pending-onboarding-list" class="onboarding-list"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Chargers</span>
+          </div>
+          <div class="card-body">
+            <div id="charger-list" class="charger-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ══════════ OVERVIEW ══════════ -->
     <div class="section active" id="page-general">
@@ -728,6 +1107,7 @@ canvas { width: 100% !important; display: block; }
 
       <!-- General -->
       <div class="subpage active" id="sub-general">
+        <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
         <div class="settings-grid">
 
           <div class="settings-card">
@@ -768,6 +1148,7 @@ canvas { width: 100% !important; display: block; }
 
       <!-- Modes -->
       <div class="subpage" id="sub-modes">
+        <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
         <div id="mode-status" style="display:none;margin-bottom:16px;padding:10px 16px;border-radius:8px;font-size:13px"></div>
         <div class="mode-grid">
           <div class="mode-card" data-mode="SuperEco" onclick="setChargeMode('SuperEco', this)">
@@ -797,6 +1178,7 @@ canvas { width: 100% !important; display: block; }
 
       <!-- Schedule -->
       <div class="subpage" id="sub-schedule">
+        <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
         <div class="schedule-layout">
           <div class="card">
             <div class="card-header">
@@ -820,6 +1202,7 @@ canvas { width: 100% !important; display: block; }
 
       <!-- ID Tags -->
       <div class="subpage" id="sub-idtags">
+          <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
           <div class="card">
             <div class="card-header">
               <span class="card-title">ID Tags</span>
@@ -856,11 +1239,7 @@ canvas { width: 100% !important; display: block; }
 
       <!-- Other -->
       <div class="subpage" id="sub-other">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-          <div id="settings-offline-banner" style="display:none;padding:10px 16px;background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.3);border-radius:8px;font-size:13px;color:var(--err);flex:1">
-            Charger is offline — settings cannot be changed.
-          </div>
-        </div>
+        <div class="settings-offline-banner">Charger is offline — settings cannot be changed.</div>
         <div class="settings-grid">
 
           <div class="settings-card">
@@ -958,7 +1337,7 @@ canvas { width: 100% !important; display: block; }
             <div id="dno-status" class="settings-status"></div>
           </div>
 
-          <div class="settings-card">
+          <div class="settings-card" id="card-suspend-timeout">
             <h4>Suspend Timeout</h4>
             <p>How long the charger waits once suspended before sleeping, in minutes. Set to 0 to disable.</p>
             <div class="range-group">
@@ -1089,8 +1468,7 @@ canvas { width: 100% !important; display: block; }
                 <option value="100">100</option>
                 <option value="all">All</option>
               </select>
-              <span class="dev-feature-note">Development feature - remove</span>
-              <button id="btn-clear-logs" class="btn btn-danger btn-sm" type="button" title="Development feature to be removed" onclick="clearActionLog(this)">Delete All Logs</button>
+              <button id="btn-clear-logs" class="btn btn-danger btn-sm admin-only" type="button" onclick="clearActionLog(this)">Delete All Logs</button>
             </div>
             <div class="table-wrap" style="padding:0 4px">
               <table class="data-table">
@@ -1172,7 +1550,7 @@ canvas { width: 100% !important; display: block; }
     <div class="section" id="page-errors">
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Error Log <span style="font-size:12px;background:rgba(239,83,80,.12);color:var(--err);padding:2px 8px;border-radius:10px;margin-left:6px">35 events</span></span>
+          <span class="card-title">Error Log</span>
         </div>
         <div class="card-body" style="padding:0 0 16px">
           <div class="table-toolbar" style="padding:16px 20px 0">
@@ -1214,11 +1592,398 @@ canvas { width: 100% !important; display: block; }
           </div>
         </div>
       </div>
+	    </div>
+
+    <!-- ══════════ CHARGERS ══════════ -->
+    <div class="section" id="page-chargers">
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-header">
+          <span class="card-title">Chargers</span>
+          <button class="btn btn-teal btn-sm" type="button" onclick="startOnboarding()">Add Charger</button>
+        </div>
+        <div class="card-body">
+          <p style="color:var(--muted);margin-bottom:16px">Start a new onboarding session or remove chargers and pending onboarding sessions from this account.</p>
+          <div class="card" style="box-shadow:none;margin-bottom:14px">
+            <div class="card-header">
+              <span class="card-title">Current Chargers</span>
+            </div>
+            <div class="card-body">
+              <div id="charger-manager-list" class="charger-list"></div>
+            </div>
+          </div>
+          <div class="card" style="box-shadow:none">
+            <div class="card-header">
+              <span class="card-title">Pending Onboarding</span>
+            </div>
+            <div class="card-body">
+              <div id="charger-manager-onboarding-list" class="onboarding-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-  </div><!-- /content -->
+    <!-- ══════════ ACCOUNT ══════════ -->
+    <div class="section" id="page-account">
+      <div class="pill-tabs">
+        <button class="pill-tab active" data-account-sub="security" onclick="showAccountSub('security')">Security</button>
+        <button class="pill-tab" data-account-sub="apikeys" onclick="showAccountSub('apikeys')">API Keys</button>
+      </div>
+
+      <!-- Security -->
+      <div class="subpage active" id="account-sub-security">
+        <div class="account-grid">
+          <div class="account-panel">
+            <div class="api-key-panel-head">
+              <h4>Change Password</h4>
+              <button class="btn btn-teal btn-sm" type="button" onclick="openPasswordModal()">Change Password</button>
+            </div>
+            <div class="security-status">Change the password used to sign in to this portal.</div>
+          </div>
+
+          <div class="account-panel">
+            <div class="api-key-panel-head">
+              <h4>Two-Factor Authentication</h4>
+              <button id="totp-action-button" class="btn btn-teal btn-sm" type="button" onclick="openTotpActionModal()">Enable 2FA</button>
+            </div>
+            <div id="totp-security-status" class="security-status">Checking status...</div>
+          </div>
+        </div>
+        <div id="account-status" class="auth-error"></div>
+      </div>
+
+      <!-- API Keys -->
+      <div class="subpage" id="account-sub-apikeys">
+        <div class="account-grid">
+          <div class="account-panel">
+            <div class="api-key-panel-head">
+              <h4>API Keys</h4>
+              <button class="btn btn-teal btn-sm" type="button" onclick="openApiKeyCreateModal()">Add</button>
+            </div>
+            <div id="api-key-list" class="api-key-list"></div>
+            <div id="api-key-status" class="auth-error"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ ADMIN ══════════ -->
+    <div class="section" id="page-admin">
+      <div class="pill-tabs">
+        <button class="pill-tab active" data-admin-sub="accounts" onclick="showAdminSub('accounts')">User Accounts</button>
+        <button class="pill-tab" data-admin-sub="chargers" onclick="showAdminSub('chargers')">Chargers</button>
+        <button class="pill-tab" data-admin-sub="portal" onclick="showAdminSub('portal')">Portal Settings</button>
+      </div>
+
+      <!-- User Accounts -->
+      <div class="subpage active" id="admin-sub-accounts">
+        <div class="admin-grid">
+          <div class="account-panel">
+            <h4>Account State</h4>
+            <form onsubmit="searchAdminAccount(event, 'state')">
+              <div class="form-field">
+                <label for="admin-state-email">Account Email</label>
+                <div class="autocomplete-wrap">
+                  <input id="admin-state-email" name="email" type="email" autocomplete="off" required>
+                  <div id="admin-state-email-suggestions" class="autocomplete-menu"></div>
+                </div>
+              </div>
+            </form>
+            <div id="admin-state-result" class="admin-result">Search for an account to enable or disable it.</div>
+            <div id="admin-state-actions" class="admin-actions"></div>
+            <div id="admin-state-status" class="auth-error"></div>
+          </div>
+
+          <div class="account-panel">
+            <h4>Reset 2FA</h4>
+            <form onsubmit="searchAdminAccount(event, '2fa')">
+              <div class="form-field">
+                <label for="admin-2fa-email">Account Email</label>
+                <div class="autocomplete-wrap">
+                  <input id="admin-2fa-email" name="email" type="email" autocomplete="off" required>
+                  <div id="admin-2fa-email-suggestions" class="autocomplete-menu"></div>
+                </div>
+              </div>
+            </form>
+            <div id="admin-2fa-result" class="admin-result">Search for an account to reset its authenticator app credentials.</div>
+            <div id="admin-2fa-actions" class="admin-actions"></div>
+            <div id="admin-2fa-status" class="auth-error"></div>
+          </div>
+
+          <div class="account-panel">
+            <h4>Bypass Email Validation</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Mark an account's initial email verification as complete.</p>
+            <form onsubmit="searchAdminAccount(event, 'email')">
+              <div class="form-field">
+                <label for="admin-email-validation-email">Account Email</label>
+                <div class="autocomplete-wrap">
+                  <input id="admin-email-validation-email" name="email" type="email" autocomplete="off" required>
+                  <div id="admin-email-validation-email-suggestions" class="autocomplete-menu"></div>
+                </div>
+              </div>
+            </form>
+            <div id="admin-email-validation-result" class="admin-result">Search for an account to mark email verification as complete.</div>
+            <div id="admin-email-validation-actions" class="admin-actions"></div>
+            <div id="admin-email-validation-status" class="auth-error"></div>
+          </div>
+
+          <div class="account-panel">
+            <h4>Delete Account</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Permanently delete an account and all associated chargers and data.</p>
+            <form onsubmit="searchAdminAccount(event, 'delete')">
+              <div class="form-field">
+                <label for="admin-delete-email">Account Email</label>
+                <div class="autocomplete-wrap">
+                  <input id="admin-delete-email" name="email" type="email" autocomplete="off" required>
+                  <div id="admin-delete-email-suggestions" class="autocomplete-menu"></div>
+                </div>
+              </div>
+            </form>
+            <div id="admin-delete-result" class="admin-result">Search for an account to delete it.</div>
+            <div id="admin-delete-actions" class="admin-actions"></div>
+            <div id="admin-delete-status" class="auth-error"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chargers -->
+      <div class="subpage" id="admin-sub-chargers">
+        <div class="admin-grid">
+          <div class="account-panel">
+            <h4>Unadopted Chargers</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Connected charge points that are not assigned to an account.</p>
+            <div class="form-field">
+              <label for="admin-charger-search">Search Serial Number</label>
+              <input id="admin-charger-search" type="search" autocomplete="off" placeholder="Type a serial number">
+            </div>
+            <div class="admin-list-head">
+              <span id="admin-unadopted-count">0 chargers</span>
+              <span>Showing up to 50</span>
+            </div>
+            <div id="admin-unadopted-list" class="charger-list admin-scroll-list"></div>
+            <div id="admin-assign-panel" class="hidden" style="margin-top:14px">
+              <div class="credential-label">Assign Selected Charger</div>
+              <div id="admin-assign-charge-point" class="credential-box" style="margin-bottom:12px">—</div>
+              <form onsubmit="assignAdminCharger(event)">
+                <div class="form-field">
+                  <label for="admin-assign-email">Account Email</label>
+                  <div class="autocomplete-wrap">
+                    <input id="admin-assign-email" name="email" type="email" autocomplete="off" required>
+                    <div id="admin-assign-email-suggestions" class="autocomplete-menu"></div>
+                  </div>
+                </div>
+                <button class="btn btn-teal" type="submit">Assign Charger</button>
+              </form>
+            </div>
+            <div id="admin-charger-status" class="auth-error"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Portal Settings -->
+      <div class="subpage" id="admin-sub-portal">
+        <div class="admin-grid">
+          <div class="account-panel">
+            <h4>Account Registration</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Allow new users to register accounts. Disable to lock the portal to existing accounts only.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="admin-registration-toggle" onchange="setAdminRegistrationEnabled(this.checked)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="admin-registration-status" class="auth-error"></div>
+          </div>
+
+          <div class="account-panel">
+            <h4>Initial Email Validation</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Require new accounts to confirm a 6 digit email code before first login.</p>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="admin-email-validation-toggle" onchange="setAdminEmailValidationEnabled(this.checked)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="admin-email-validation-global-status" class="auth-error"></div>
+          </div>
+
+          <div class="account-panel">
+            <h4>SMTP Settings</h4>
+            <p id="admin-smtp-summary" style="color:var(--muted);font-size:13px;margin-bottom:12px">SMTP status unknown.</p>
+            <button id="admin-test-smtp" class="btn btn-teal btn-sm" type="button" onclick="testAdminSmtp()" disabled>Send Test Email</button>
+            <div id="admin-smtp-status" class="auth-error"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+	  </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /shell -->
+
+<div id="onboarding-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-modal-title">
+    <h3 id="onboarding-modal-title">Charger onboarding started</h3>
+    <p>Enter these values into the charger OCPP settings. These credentials are shown once; cancel and create a new onboarding session if you lose them.</p>
+    <div style="display:grid;gap:12px;margin-bottom:18px">
+      <div>
+        <div class="credential-label">OCPP endpoint</div>
+        <div id="onboarding-endpoint" class="credential-box">—</div>
+      </div>
+      <div>
+        <div class="credential-label">OCPP password</div>
+        <div id="onboarding-password" class="credential-box">—</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-teal" type="button" onclick="closeOnboardingDialog()">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="password-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+    <h3 id="password-modal-title">Change Password</h3>
+    <p>Enter your current password and choose a new one.</p>
+    <form id="password-change-form" onsubmit="changeAccountPassword(event)">
+      <div class="form-field">
+        <label for="account-current-password">Current Password</label>
+        <input id="account-current-password" name="current_password" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="form-field">
+        <label for="account-new-password">New Password</label>
+        <input id="account-new-password" name="new_password" type="password" autocomplete="new-password" minlength="10" required>
+      </div>
+      <div class="form-field">
+        <label for="account-new-password-confirm">Confirm New Password</label>
+        <input id="account-new-password-confirm" name="new_password_confirm" type="password" autocomplete="new-password" minlength="10" required>
+      </div>
+      <div id="password-change-status" class="auth-error"></div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="closePasswordModal()">Cancel</button>
+        <button class="btn btn-teal" type="submit">Change Password</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="totp-setup-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="totp-setup-title">
+    <h3 id="totp-setup-title">Enable 2FA</h3>
+    <p>Confirm your password before creating authenticator app credentials.</p>
+    <form id="totp-setup-form" onsubmit="startTotpSetup(event)">
+      <div class="form-field">
+        <label for="totp-setup-password">Current Password</label>
+        <input id="totp-setup-password" name="current_password" type="password" autocomplete="current-password" required>
+      </div>
+      <div id="totp-setup-status" class="auth-error"></div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="closeTotpSetupModal()">Cancel</button>
+        <button class="btn btn-teal" type="submit">Continue</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="totp-enable-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="totp-enable-title">
+    <h3 id="totp-enable-title">Confirm 2FA</h3>
+    <p>Add these credentials to your authenticator app, then enter the generated code.</p>
+    <form id="totp-enable-form" onsubmit="enableTotp(event)">
+      <div id="totp-qr" class="totp-qr" aria-label="2FA QR code"></div>
+      <div class="setup-secret">
+        <div>
+          <div class="credential-label">Setup Key</div>
+          <div id="totp-secret" class="credential-box">—</div>
+        </div>
+        <div>
+          <div class="credential-label">Authenticator URI</div>
+          <div id="totp-uri" class="credential-box">—</div>
+        </div>
+      </div>
+      <div class="form-field">
+        <label for="totp-enable-code">Authentication Code</label>
+        <input id="totp-enable-code" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+      </div>
+      <div id="totp-enable-status" class="auth-error"></div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="closeTotpEnableModal()">Cancel</button>
+        <button class="btn btn-teal" type="submit">Enable 2FA</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="totp-disable-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="totp-disable-title">
+    <h3 id="totp-disable-title">Disable 2FA</h3>
+    <p>Confirm your current password and authentication code to disable 2FA.</p>
+    <form id="totp-disable-form" onsubmit="disableTotp(event)">
+      <div class="form-field">
+        <label for="totp-disable-password">Current Password</label>
+        <input id="totp-disable-password" name="current_password" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="form-field">
+        <label for="totp-disable-code">Authentication Code</label>
+        <input id="totp-disable-code" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+      </div>
+      <div id="totp-disable-status" class="auth-error"></div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="closeTotpDisableModal()">Cancel</button>
+        <button class="btn btn-danger" type="submit">Disable 2FA</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="api-key-create-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="api-key-create-title">
+    <h3 id="api-key-create-title">Add API Key</h3>
+    <p>Create a scoped key for future API access. The full key will only be shown once.</p>
+    <form id="api-key-create-form" onsubmit="createApiKey(event)">
+      <div class="form-field">
+        <label for="api-key-name">Name</label>
+        <input id="api-key-name" name="name" type="text" autocomplete="off" maxlength="80" required>
+      </div>
+      <div class="form-field">
+        <label for="api-key-scope">Scope</label>
+        <select id="api-key-scope" name="scope" required>
+          <option value="read">Read</option>
+          <option value="write">Write</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="api-key-expiry">Expiry</label>
+        <select id="api-key-expiry" name="expiry" required>
+          <option value="30">30 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="180">180 days</option>
+          <option value="365">1 year</option>
+          <option value="never">No expiry</option>
+        </select>
+      </div>
+      <div id="api-key-create-status" class="auth-error"></div>
+      <div class="form-actions">
+        <button class="btn btn-outline" type="button" onclick="closeApiKeyCreateModal()">Cancel</button>
+        <button class="btn btn-teal" type="submit">Create Key</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="api-key-created-modal-backdrop" class="onboarding-modal-backdrop" aria-hidden="true">
+  <div class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="api-key-created-title">
+    <h3 id="api-key-created-title">API Key Created</h3>
+    <p>Store this key now. It will not be shown again.</p>
+    <div class="api-key-secret">
+      <div class="credential-label">New API Key</div>
+      <div id="api-key-created-value" class="credential-box">—</div>
+    </div>
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-teal" type="button" onclick="closeApiKeyCreatedModal()">Done</button>
+    </div>
+  </div>
+</div>
 
 <div id="app-modal-backdrop" class="app-modal-backdrop" aria-hidden="true">
   <div id="app-modal" class="app-modal" role="dialog" aria-modal="true" aria-labelledby="app-modal-title" aria-describedby="app-modal-message">
@@ -1236,13 +2001,41 @@ canvas { width: 100% !important; display: block; }
   </div>
 </div>
 
+<div id="firmware-progress-backdrop" class="app-modal-backdrop" aria-hidden="true">
+  <div class="app-modal firmware-progress-modal" role="dialog" aria-modal="true" aria-labelledby="firmware-progress-title" aria-describedby="firmware-progress-status">
+    <div class="app-modal-head">
+      <div class="app-modal-icon">↓</div>
+      <div>
+        <div id="firmware-progress-title" class="app-modal-title">Firmware Transfer</div>
+        <div id="firmware-progress-status" class="app-modal-message firmware-progress-status">Preparing firmware…</div>
+      </div>
+    </div>
+    <div class="firmware-progress-meta">
+      <div id="firmware-progress-file">Firmware file: —</div>
+      <div id="firmware-progress-ocpp">Charger status: —</div>
+    </div>
+    <div class="firmware-progress-bar" aria-hidden="true">
+      <div id="firmware-progress-fill" class="firmware-progress-fill"></div>
+    </div>
+    <div class="firmware-progress-detail">
+      <span id="firmware-progress-chunks">Waiting for charger download request</span>
+      <span id="firmware-progress-percent">0%</span>
+    </div>
+    <div class="app-modal-actions">
+      <button id="firmware-progress-close" class="btn btn-outline" type="button" onclick="closeFirmwareProgressModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ═══════════════════════════════════════════════════
 // Navigation
 // ═══════════════════════════════════════════════════
-const pageNames = { general:'Overview', settings:'Settings', power:'Power', energy:'Energy', errors:'Errors' };
-const pagePaths = { general:'/', settings:'/settings', power:'/power', energy:'/energy', errors:'/errors' };
+const pageNames = { general:'Overview', settings:'Settings', power:'Power', energy:'Energy', errors:'Errors', chargers:'Chargers', account:'Account', admin:'Admin' };
+const pagePaths = { general:'/', settings:'/settings', power:'/power', energy:'/energy', errors:'/errors', chargers:'/chargers', account:'/account', admin:'/admin' };
 const settingsSubPaths = { general:'/settings/general', modes:'/settings/modes', schedule:'/settings/schedule', idtags:'/settings/idtags', other:'/settings/other', logs:'/settings/logs' };
+const adminSubPaths = { accounts:'/admin/accounts', chargers:'/admin/chargers', portal:'/admin/portal' };
+const accountSubPaths = { security:'/account/security', apikeys:'/account/api-keys' };
 let _modalResolve = null;
 let _modalLastFocus = null;
 
@@ -1308,18 +2101,1497 @@ document.getElementById('app-modal-backdrop')?.addEventListener('click', event =
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && document.getElementById('app-modal-backdrop')?.classList.contains('open')) {
     closeAppModal(false);
+  } else if (event.key === 'Escape' && document.getElementById('password-modal-backdrop')?.classList.contains('open')) {
+    closePasswordModal();
+  } else if (event.key === 'Escape' && document.getElementById('totp-setup-modal-backdrop')?.classList.contains('open')) {
+    closeTotpSetupModal();
+  } else if (event.key === 'Escape' && document.getElementById('totp-enable-modal-backdrop')?.classList.contains('open')) {
+    closeTotpEnableModal();
+  } else if (event.key === 'Escape' && document.getElementById('totp-disable-modal-backdrop')?.classList.contains('open')) {
+    closeTotpDisableModal();
+  } else if (event.key === 'Escape' && document.getElementById('api-key-create-modal-backdrop')?.classList.contains('open')) {
+    closeApiKeyCreateModal();
+  } else if (event.key === 'Escape' && document.getElementById('api-key-created-modal-backdrop')?.classList.contains('open')) {
+    closeApiKeyCreatedModal();
+  } else if (event.key === 'Escape' && document.getElementById('firmware-progress-backdrop')?.classList.contains('open')) {
+    const closeBtn = document.getElementById('firmware-progress-close');
+    if (closeBtn?.dataset.action === 'close' && !closeBtn.disabled) closeFirmwareProgressModal();
   }
 });
+document.getElementById('password-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'password-modal-backdrop') closePasswordModal();
+});
+document.getElementById('totp-setup-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'totp-setup-modal-backdrop') closeTotpSetupModal();
+});
+document.getElementById('totp-enable-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'totp-enable-modal-backdrop') closeTotpEnableModal();
+});
+document.getElementById('totp-disable-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'totp-disable-modal-backdrop') closeTotpDisableModal();
+});
+document.getElementById('api-key-create-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'api-key-create-modal-backdrop') closeApiKeyCreateModal();
+});
+document.getElementById('api-key-created-modal-backdrop')?.addEventListener('click', event => {
+  if (event.target.id === 'api-key-created-modal-backdrop') closeApiKeyCreatedModal();
+});
+
+// ═══════════════════════════════════════════════════
+// Auth and onboarding
+// ═══════════════════════════════════════════════════
+const INGRESS_BASE_PATH = (() => {
+  const match = window.location.pathname.match(/^(\/api\/hassio_ingress\/[^/]+)/);
+  return match ? match[1] : '';
+})();
+
+function apiUrl(url) {
+  if (typeof url === 'string' && url.startsWith('/api/')) {
+    return `${INGRESS_BASE_PATH}${url}`;
+  }
+  return url;
+}
+
+function apiFetch(url, options = {}) {
+  return fetch(apiUrl(url), options);
+}
+
+async function apiJson(url, options = {}) {
+  const response = await apiFetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (_) {
+    data = { error: text };
+  }
+  if (!response.ok) throw new Error(data.error || response.statusText || `HTTP ${response.status}`);
+  return data;
+}
+
+function showAuthMode(mode) {
+  if (document.body.classList.contains('first-user-registration')) {
+    mode = 'register';
+  }
+  const login = mode !== 'register';
+  document.getElementById('auth-tab-login')?.classList.toggle('active', login);
+  document.getElementById('auth-tab-register')?.classList.toggle('active', !login);
+  document.getElementById('auth-form-login')?.classList.toggle('active', login);
+  document.getElementById('auth-form-register')?.classList.toggle('active', !login);
+  document.getElementById('auth-form-email-verify')?.classList.remove('active');
+  document.getElementById('auth-form-forgot-password')?.classList.remove('active');
+  document.getElementById('auth-form-reset-password')?.classList.remove('active');
+  hideLoginOtpPrompt();
+  clearEmailVerificationCooldown();
+  set('auth-error', '');
+}
+
+async function submitAuth(event, mode) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const payload = Object.fromEntries(new FormData(form).entries());
+  if (mode === 'register' && payload.password !== payload.password_confirm) {
+    set('auth-error', 'Passwords do not match');
+    return;
+  }
+  if (button) button.disabled = true;
+  set('auth-error', '');
+  try {
+    const data = await apiJson(`/api/auth/${mode}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (mode === 'login' && data.otp_required) {
+      showLoginOtpPrompt(data.error || 'Enter your authentication code');
+      return;
+    }
+    if (data.email_verification_required) {
+      showEmailVerificationPrompt(data.email || payload.email, data.error || data.message);
+      return;
+    }
+    applyAuthState(data);
+  } catch (err) {
+    set('auth-error', err.message || 'Authentication failed');
+    if (mode === 'login' && /authentication code/i.test(err.message || '')) {
+      showLoginOtpPrompt(err.message);
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function showLoginOtpPrompt(message) {
+  document.getElementById('login-otp-field')?.classList.remove('hidden');
+  document.getElementById('login-otp')?.setAttribute('required', 'required');
+  set('auth-error', message || 'Enter your authentication code');
+  document.getElementById('login-otp')?.focus();
+}
+
+function hideLoginOtpPrompt() {
+  document.getElementById('login-otp-field')?.classList.add('hidden');
+  document.getElementById('login-otp')?.removeAttribute('required');
+  const input = document.getElementById('login-otp');
+  if (input) input.value = '';
+}
+
+function showEmailVerificationPrompt(email, message) {
+  _pendingEmailVerification.email = email || '';
+  document.getElementById('auth-form-login')?.classList.remove('active');
+  document.getElementById('auth-form-register')?.classList.remove('active');
+  document.getElementById('auth-form-email-verify')?.classList.add('active');
+  document.getElementById('auth-tab-login')?.classList.remove('active');
+  document.getElementById('auth-tab-register')?.classList.remove('active');
+  set('email-verify-address', _pendingEmailVerification.email);
+  set('auth-error', message || 'Enter the verification code sent to your email address.');
+  const input = document.getElementById('email-verify-otp');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  startEmailVerificationCooldown(30);
+}
+
+function clearEmailVerificationCooldown() {
+  if (_pendingEmailVerification.timer) {
+    clearInterval(_pendingEmailVerification.timer);
+    _pendingEmailVerification.timer = null;
+  }
+  const button = document.getElementById('email-verify-resend');
+  if (button) {
+    button.disabled = false;
+    button.textContent = 'Resend';
+  }
+}
+
+function startEmailVerificationCooldown(seconds) {
+  clearEmailVerificationCooldown();
+  _pendingEmailVerification.seconds = Number(seconds) || 30;
+  const button = document.getElementById('email-verify-resend');
+  if (!button) return;
+  const render = () => {
+    const remaining = Math.max(0, _pendingEmailVerification.seconds);
+    button.disabled = remaining > 0;
+    button.textContent = remaining > 0 ? `Resend (${remaining})` : 'Resend';
+  };
+  render();
+  _pendingEmailVerification.timer = setInterval(() => {
+    _pendingEmailVerification.seconds -= 1;
+    render();
+    if (_pendingEmailVerification.seconds <= 0) clearEmailVerificationCooldown();
+  }, 1000);
+}
+
+function showForgotPasswordMode(event) {
+  if (event) event.preventDefault();
+  ['auth-form-login','auth-form-register','auth-form-email-verify','auth-form-reset-password'].forEach(id => {
+    document.getElementById(id)?.classList.remove('active');
+  });
+  document.getElementById('auth-tab-login')?.classList.remove('active');
+  document.getElementById('auth-tab-register')?.classList.remove('active');
+  document.getElementById('auth-form-forgot-password')?.classList.add('active');
+  document.getElementById('forgot-password-email')?.focus();
+  set('auth-error', '');
+}
+
+function cancelForgotPassword() {
+  _resetToken = null;
+  document.getElementById('auth-form-forgot-password')?.classList.remove('active');
+  document.getElementById('auth-form-reset-password')?.classList.remove('active');
+  const fpEmail = document.getElementById('forgot-password-email');
+  if (fpEmail) fpEmail.value = '';
+  _restoreAuthTabs();
+  refreshAuthState();
+}
+
+async function submitForgotPassword(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const email = document.getElementById('forgot-password-email')?.value || '';
+  if (button) button.disabled = true;
+  set('auth-error', '');
+  try {
+    const data = await apiJson('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+    set('auth-error', data.message || 'If that email is registered you will receive a reset link shortly.');
+    document.getElementById('auth-form-forgot-password')?.classList.remove('active');
+    showAuthMode('login');
+  } catch (err) {
+    set('auth-error', err.message || 'Could not send reset email');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+let _resetToken = null;
+
+async function checkPasswordResetToken() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('reset');
+  if (!token) return false;
+  try {
+    const data = await apiJson(`/api/auth/reset-password?token=${encodeURIComponent(token)}`);
+    if (data.valid) {
+      _resetToken = token;
+      window.history.replaceState({}, '', window.location.pathname);
+      ['auth-form-login','auth-form-register','auth-form-email-verify','auth-form-forgot-password'].forEach(id => {
+        document.getElementById(id)?.classList.remove('active');
+      });
+      document.getElementById('auth-tab-login')?.classList.remove('active');
+      document.getElementById('auth-tab-register')?.classList.remove('active');
+      document.getElementById('auth-tab-register')?.style.setProperty('display', 'none');
+      document.getElementById('auth-tab-login')?.style.setProperty('display', 'none');
+      document.getElementById('auth-form-reset-password')?.classList.add('active');
+      document.body.className = 'auth-login';
+      set('auth-error', '');
+      document.getElementById('reset-password-new')?.focus();
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function _restoreAuthTabs() {
+  document.getElementById('auth-tab-login')?.style.removeProperty('display');
+  document.getElementById('auth-tab-register')?.style.removeProperty('display');
+}
+
+async function submitResetPassword(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const password = document.getElementById('reset-password-new')?.value || '';
+  const password_confirm = document.getElementById('reset-password-confirm')?.value || '';
+  if (password !== password_confirm) {
+    set('auth-error', 'Passwords do not match');
+    return;
+  }
+  if (button) button.disabled = true;
+  set('auth-error', '');
+  try {
+    await apiJson('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token: _resetToken, password, password_confirm }),
+    });
+    _resetToken = null;
+    document.getElementById('auth-form-reset-password')?.classList.remove('active');
+    const newPass = document.getElementById('reset-password-new');
+    const confPass = document.getElementById('reset-password-confirm');
+    if (newPass) newPass.value = '';
+    if (confPass) confPass.value = '';
+    _restoreAuthTabs();
+    await refreshAuthState();
+    set('auth-error', 'Password reset successfully. Please log in.');
+  } catch (err) {
+    set('auth-error', err.message || 'Password reset failed');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function cancelEmailVerification() {
+  _pendingEmailVerification.email = null;
+  clearEmailVerificationCooldown();
+  showAuthMode(document.body.classList.contains('first-user-registration') ? 'register' : 'login');
+}
+
+async function resendEmailVerification() {
+  if (!_pendingEmailVerification.email) return;
+  const button = document.getElementById('email-verify-resend');
+  if (button) button.disabled = true;
+  set('auth-error', '');
+  try {
+    const data = await apiJson('/api/auth/resend-email-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email: _pendingEmailVerification.email }),
+    });
+    set('auth-error', data.message || 'A new verification code has been sent.');
+    startEmailVerificationCooldown(data.resend_after_seconds || 30);
+  } catch (err) {
+    set('auth-error', err.message || 'Could not resend verification code');
+    if (button) button.disabled = false;
+  }
+}
+
+async function submitEmailVerification(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const otp = String(new FormData(form).get('otp') || '').trim();
+  if (button) button.disabled = true;
+  set('auth-error', '');
+  try {
+    const data = await apiJson('/api/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ email: _pendingEmailVerification.email, otp }),
+    });
+    _pendingEmailVerification.email = null;
+    clearEmailVerificationCooldown();
+    applyAuthState(data);
+  } catch (err) {
+    set('auth-error', err.message || 'Verification failed');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function logout() {
+  try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+  stopChargerPageRefresh();
+  _authState = { authenticated: false, user: null, chargers: [], onboarding_sessions: [] };
+  ['login-email', 'login-password', 'login-otp', 'register-email', 'register-password', 'register-password-confirm'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.body.className = 'auth-login';
+  applyEffectiveTheme();
+  set('auth-error', '');
+  await refreshAuthState();
+}
+
+async function refreshAuthState() {
+  if (await checkPasswordResetToken()) return;
+  try {
+    const data = await apiJson('/api/auth/session');
+    applyAuthState(data);
+  } catch (_) {
+    _authState = { authenticated: false, user: null, chargers: [], onboarding_sessions: [] };
+    document.body.className = 'auth-login first-user-registration';
+    applyEffectiveTheme();
+    setRegistrationRoleNotice('Admin');
+    showAuthMode('register');
+  }
+}
+
+function applyAuthState(data) {
+  setRegistrationRoleNotice(data.registration_role);
+  _authState = {
+    authenticated: !!data.authenticated,
+    user: data.user || null,
+    chargers: data.chargers || [],
+    onboarding_sessions: data.onboarding_sessions || [],
+  };
+  applyEffectiveTheme();
+
+  if (!_authState.authenticated) {
+    const firstUser = data.first_user_required === true || data.registration_role === 'Admin';
+    const registrationEnabled = data.registration_enabled !== false;
+    const registerTab = document.getElementById('auth-tab-register');
+    if (registerTab) registerTab.style.display = registrationEnabled ? '' : 'none';
+    document.body.className = firstUser ? 'auth-login first-user-registration' : 'auth-login';
+    showAuthMode(firstUser ? 'register' : 'login');
+    return;
+  }
+
+  const hasCharger = _authState.chargers.length > 0;
+  document.body.className = hasCharger ? 'auth-app has-charger' : 'auth-app no-charger';
+  document.body.classList.toggle('is-admin', _authState.user?.role === 'Admin');
+  set('nav-user-name', _authState.user?.display_name || _authState.user?.email || 'Account');
+  set('nav-user-role', _authState.user?.role || 'User');
+  renderPendingOnboarding();
+  renderChargerList();
+
+  if (!hasCharger) {
+    applyRoute(window.location.pathname, { replace: true });
+    closeNav();
+    return;
+  }
+
+  applyRoute(window.location.pathname, { replace: true });
+  if (!_sseStarted) {
+    _sseStarted = true;
+    connectSSE();
+  }
+  loadFirmwareManifest();
+}
+
+function setRegistrationRoleNotice(role) {
+  const expectedRole = role || 'User';
+  const notice = document.getElementById('register-role-notice');
+  if (!notice) return;
+  if (expectedRole === 'Admin') {
+    notice.classList.remove('hidden');
+    notice.innerHTML = 'This is the first account, so it will be created as <strong>Admin</strong>.';
+  } else {
+    notice.classList.add('hidden');
+    notice.innerHTML = '';
+  }
+}
+
+function renderPendingOnboarding() {
+  const list = document.getElementById('pending-onboarding-list');
+  if (!list) return;
+  list.innerHTML = renderOnboardingItems(_authState.onboarding_sessions || []);
+}
+
+function renderOnboardingItems(sessions) {
+  sessions = sessions || [];
+  if (!sessions.length) {
+    return '<div style="color:var(--muted)">No pending onboarding sessions.</div>';
+  }
+  return sessions.map(session => `
+    <div class="onboarding-item">
+      <div>
+        <div class="credential-label">Pending Session</div>
+        <div style="font-weight:700">${escapeHtml(session.status || 'pending')}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">Credentials were shown when this session was created.</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--muted)">Expires ${escapeHtml(fmtDt(session.expires_at))}</span>
+        <button class="btn btn-outline btn-sm" type="button" onclick="deleteOnboarding('${escapeJs(session.id)}')">Cancel</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderChargerList() {
+  const list = document.getElementById('charger-list');
+  if (!list) return;
+  list.innerHTML = renderChargerItems(_authState.chargers || []);
+}
+
+function renderChargerItems(chargers) {
+  if (!chargers.length) {
+    return '<div style="color:var(--muted)">No chargers are linked to this account.</div>';
+  }
+  const canSwitch = chargers.length > 1;
+  return chargers.map(charger => `
+    <div class="charger-item">
+      <div>
+        <div class="charger-name">${escapeHtml(charger.charge_point_id || charger.id || 'Pending charge point identity')}</div>
+        <div class="charger-meta">${escapeHtml(chargerDetailLabel(charger))}</div>
+        ${charger.remote_address ? `<div class="charger-meta">${escapeHtml(charger.remote_address)}</div>` : ''}
+      </div>
+      <div class="charger-actions">
+        ${charger.active ? '<span class="charger-active-badge">Active</span>' : ''}
+        <span class="${escapeHtml(chargerOnlinePillClass(charger))}">${escapeHtml(chargerOnlineLabel(charger))}</span>
+        <span class="${escapeHtml(chargerStatusPillClass(charger))}">${escapeHtml(chargerStatusLabel(charger))}</span>
+        ${canSwitch && !charger.active ? `<button class="btn btn-teal btn-sm" type="button" onclick="switchCharger('${escapeJs(charger.id)}')">Switch</button>` : ''}
+        <button class="btn btn-danger btn-sm" type="button" onclick="deleteCharger('${escapeJs(charger.id)}')">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function chargerDetailLabel(charger) {
+  const parts = [charger.manufacturer, charger.model, charger.serial].filter(Boolean);
+  if (parts.length) return parts.join(' · ');
+  const displayName = charger.display_name || '';
+  if (displayName && displayName !== charger.charge_point_id) return displayName;
+  return 'Connected charger';
+}
+
+function chargerSerialLabel(charger) {
+  return charger?.serial || 'EV Charger';
+}
+
+function chargerIsOnline(charger) {
+  return String(charger?.connection_state || '').toLowerCase() === 'connected';
+}
+
+function chargerOnlineLabel(charger) {
+  return chargerIsOnline(charger) ? 'Online' : 'Offline';
+}
+
+function chargerOnlinePillClass(charger) {
+  return `charger-pill ${chargerIsOnline(charger) ? 'online' : 'offline'}`;
+}
+
+function chargerStatusLabel(charger) {
+  return charger?.status || 'No Status';
+}
+
+function chargerStatusPillClass(charger) {
+  const status = String(charger?.status || '').toLowerCase();
+  if (status === 'charging') return 'charger-pill charging';
+  if (['preparing', 'finishing', 'suspendedevse', 'suspendedev', 'reserved', 'unavailable'].includes(status)) return 'charger-pill warn';
+  if (status === 'faulted') return 'charger-pill error';
+  return 'charger-pill';
+}
+
+function renderChargerManager() {
+  const chargers = document.getElementById('charger-manager-list');
+  const onboarding = document.getElementById('charger-manager-onboarding-list');
+  if (chargers) chargers.innerHTML = renderChargerItems(_authState.chargers || []);
+  if (onboarding) onboarding.innerHTML = renderOnboardingItems(_authState.onboarding_sessions || []);
+}
+
+async function refreshChargerPageData() {
+  if (!document.body.classList.contains('page-chargers') || !_authState.authenticated) return;
+  _chargerPageRefreshAbort?.abort();
+  const controller = new AbortController();
+  _chargerPageRefreshAbort = controller;
+  try {
+    const data = await apiJson('/api/chargers', { signal: controller.signal });
+    _authState.chargers = data.chargers || [];
+    renderChargerList();
+    renderChargerManager();
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.debug('Could not refresh chargers', err);
+    }
+  }
+}
+
+function startChargerPageRefresh() {
+  if (_chargerPageRefreshTimer) return;
+  refreshChargerPageData();
+  _chargerPageRefreshTimer = setInterval(refreshChargerPageData, 5000);
+}
+
+function stopChargerPageRefresh() {
+  if (_chargerPageRefreshTimer) {
+    clearInterval(_chargerPageRefreshTimer);
+    _chargerPageRefreshTimer = null;
+  }
+  _chargerPageRefreshAbort?.abort();
+  _chargerPageRefreshAbort = null;
+}
+
+async function startOnboarding() {
+  try {
+    const data = await apiJson('/api/onboarding', { method: 'POST', body: '{}' });
+    const session = data.onboarding_session;
+    _authState.onboarding_sessions = [stripOnboardingCredentials(session), ...(_authState.onboarding_sessions || [])];
+    renderPendingOnboarding();
+    renderChargerManager();
+    showOnboardingDialog(session);
+  } catch (err) {
+    await appAlert('Onboarding Failed', err.message || 'Could not create onboarding session', 'danger');
+  }
+}
+
+function stripOnboardingCredentials(session) {
+  const { endpoint_url, ocpp_password, ...safeSession } = session || {};
+  return { ...safeSession, endpoint_url: null, ocpp_password: null, credentials_available: false };
+}
+
+function showOnboardingDialog(session) {
+  set('onboarding-endpoint', session?.endpoint_url || '—');
+  set('onboarding-password', session?.ocpp_password || '—');
+  const backdrop = document.getElementById('onboarding-modal-backdrop');
+  if (backdrop) {
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+  }
+}
+
+function closeOnboardingDialog() {
+  const backdrop = document.getElementById('onboarding-modal-backdrop');
+  if (backdrop) {
+    backdrop.classList.remove('open');
+    backdrop.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+  }
+}
+
+async function deleteOnboarding(id) {
+  const confirmed = await appConfirm({
+    title: 'Cancel Onboarding',
+    message: 'Cancel this pending charger onboarding session?',
+    confirmText: 'Cancel Onboarding',
+    variant: 'warn',
+  });
+  if (!confirmed) return;
+  try {
+    await apiJson(`/api/onboarding/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    _authState.onboarding_sessions = (_authState.onboarding_sessions || []).filter(item => item.id !== id);
+    renderPendingOnboarding();
+    renderChargerManager();
+  } catch (err) {
+    await appAlert('Cancel Failed', err.message || 'Could not cancel onboarding', 'danger');
+  }
+}
+
+async function deleteCharger(id) {
+  const charger = (_authState.chargers || []).find(item => item.id === id);
+  const confirmed = await appConfirm({
+    title: 'Delete Charger',
+    message: `Remove ${charger?.display_name || 'this charger'} from this account?`,
+    confirmText: 'Delete Charger',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  try {
+    const data = await apiJson(`/api/chargers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    _authState.chargers = data.chargers || (_authState.chargers || []).filter(item => item.id !== id);
+    renderChargerList();
+    renderChargerManager();
+    if (!_authState.chargers.length) {
+      document.body.classList.remove('has-charger');
+      document.body.classList.add('no-charger');
+      applyRoute(window.location.pathname, { replace: true });
+      closeNav();
+    }
+  } catch (err) {
+    await appAlert('Delete Failed', err.message || 'Could not delete charger', 'danger');
+  }
+}
+
+async function switchCharger(id) {
+  const charger = (_authState.chargers || []).find(item => item.id === id);
+  try {
+    const data = await apiJson(`/api/chargers/${encodeURIComponent(id)}/switch`, {
+      method: 'POST',
+      body: '{}',
+    });
+    _authState.chargers = data.chargers || _authState.chargers || [];
+    renderChargerList();
+    renderChargerManager();
+    const switched = (_authState.chargers || []).find(item => item.id === id) || charger;
+    set('status-serial', chargerSerialLabel(switched));
+    showPage('general');
+  } catch (err) {
+    await appAlert('Switch Failed', err.message || 'Could not switch charger', 'danger');
+  }
+}
+
+async function loadAccountSecurityPage() {
+  set('account-status', '');
+  try {
+    const data = await apiJson('/api/account/security');
+    renderAccountSecurity(data.security || {});
+  } catch (err) {
+    set('account-status', err.message || 'Could not load account security');
+  }
+  loadApiKeys();
+}
+
+function clearAccountForms() {
+  document.querySelectorAll('#page-account input').forEach(input => { input.value = ''; });
+  document.getElementById('password-change-form')?.reset();
+  document.getElementById('totp-setup-form')?.reset();
+  document.getElementById('totp-enable-form')?.reset();
+  document.getElementById('totp-disable-form')?.reset();
+  set('totp-secret', '—');
+  set('totp-uri', '—');
+  const qr = document.getElementById('totp-qr');
+  if (qr) qr.innerHTML = '';
+}
+
+function renderAccountSecurity(security) {
+  const enabled = !!security.totp_enabled;
+  set('totp-security-status', enabled ? '2FA is enabled for this account.' : '2FA is not enabled.');
+  const action = document.getElementById('totp-action-button');
+  if (action) {
+    action.textContent = enabled ? 'Disable 2FA' : 'Enable 2FA';
+    action.classList.toggle('btn-danger', enabled);
+    action.classList.toggle('btn-teal', !enabled);
+  }
+  if (_authState.user) _authState.user.totp_enabled = enabled;
+}
+
+async function loadApiKeys() {
+  set('api-key-status', '');
+  try {
+    const data = await apiJson('/api/account/api-keys');
+    renderApiKeys(data.keys || []);
+  } catch (err) {
+    set('api-key-status', err.message || 'Could not load API keys');
+  }
+}
+
+function renderApiKeys(keys) {
+  const list = document.getElementById('api-key-list');
+  if (!list) return;
+  if (!keys.length) {
+    list.innerHTML = '<div style="color:var(--muted)">No API keys have been created.</div>';
+    return;
+  }
+  list.innerHTML = keys.map(key => `
+    <div class="api-key-item">
+      <div>
+        <div class="api-key-name">${escapeHtml(key.name || 'API Key')}</div>
+        <div class="api-key-meta">${escapeHtml((key.scope || 'read').toUpperCase())} · ${escapeHtml(key.key_prefix || '')} · ${escapeHtml(formatApiKeyExpiry(key.expires_at))}</div>
+        <div class="api-key-meta">Last used ${escapeHtml(key.last_used_at || 'Never')}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" type="button" onclick="revokeApiKey('${escapeJs(key.id)}')">Remove</button>
+    </div>
+  `).join('');
+}
+
+function formatApiKeyExpiry(expiresAt) {
+  if (!expiresAt) return 'No expiry';
+  return `Expires ${expiresAt}`;
+}
+
+function openAccountModal(backdropId, formId, focusId, statusId) {
+  const backdrop = document.getElementById(backdropId);
+  if (!backdrop) return;
+  if (formId) document.getElementById(formId)?.reset();
+  if (statusId) set(statusId, '');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  if (focusId) setTimeout(() => document.getElementById(focusId)?.focus(), 0);
+}
+
+function closeAccountModal(backdropId) {
+  const backdrop = document.getElementById(backdropId);
+  if (!backdrop) return;
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+}
+
+function openPasswordModal() {
+  openAccountModal('password-modal-backdrop', 'password-change-form', 'account-current-password', 'password-change-status');
+}
+
+function closePasswordModal() {
+  closeAccountModal('password-modal-backdrop');
+}
+
+function openTotpActionModal() {
+  if (_authState.user?.totp_enabled) {
+    openTotpDisableModal();
+  } else {
+    openTotpSetupModal();
+  }
+}
+
+function openTotpSetupModal() {
+  openAccountModal('totp-setup-modal-backdrop', 'totp-setup-form', 'totp-setup-password', 'totp-setup-status');
+}
+
+function closeTotpSetupModal() {
+  closeAccountModal('totp-setup-modal-backdrop');
+}
+
+function openTotpEnableModal() {
+  openAccountModal('totp-enable-modal-backdrop', 'totp-enable-form', 'totp-enable-code', 'totp-enable-status');
+}
+
+function closeTotpEnableModal() {
+  closeAccountModal('totp-enable-modal-backdrop');
+}
+
+function openTotpDisableModal() {
+  openAccountModal('totp-disable-modal-backdrop', 'totp-disable-form', 'totp-disable-password', 'totp-disable-status');
+}
+
+function closeTotpDisableModal() {
+  closeAccountModal('totp-disable-modal-backdrop');
+}
+
+function openApiKeyCreateModal() {
+  const backdrop = document.getElementById('api-key-create-modal-backdrop');
+  const form = document.getElementById('api-key-create-form');
+  if (!backdrop || !form) return;
+  form.reset();
+  set('api-key-create-status', '');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  setTimeout(() => document.getElementById('api-key-name')?.focus(), 0);
+}
+
+function closeApiKeyCreateModal() {
+  const backdrop = document.getElementById('api-key-create-modal-backdrop');
+  if (!backdrop) return;
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+}
+
+function showApiKeyCreatedModal(apiKey) {
+  set('api-key-created-value', apiKey || '—');
+  const backdrop = document.getElementById('api-key-created-modal-backdrop');
+  if (!backdrop) return;
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  setTimeout(() => backdrop.querySelector('button')?.focus(), 0);
+}
+
+function closeApiKeyCreatedModal() {
+  const backdrop = document.getElementById('api-key-created-modal-backdrop');
+  if (!backdrop) return;
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+}
+
+async function createApiKey(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const payload = Object.fromEntries(new FormData(form).entries());
+  if (button) button.disabled = true;
+  set('api-key-status', '');
+  set('api-key-create-status', '');
+  try {
+    const data = await apiJson('/api/account/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    form.reset();
+    closeApiKeyCreateModal();
+    showApiKeyCreatedModal(data.api_key || '—');
+    renderApiKeys(data.keys || []);
+    set('api-key-status', 'API key created');
+  } catch (err) {
+    set('api-key-create-status', err.message || 'Could not create API key');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function revokeApiKey(id) {
+  const confirmed = await appConfirm({
+    title: 'Remove API Key',
+    message: 'Remove this API key? It will stop working immediately.',
+    confirmText: 'Remove',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  set('api-key-status', '');
+  try {
+    const data = await apiJson(`/api/account/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    renderApiKeys(data.keys || []);
+    set('api-key-status', 'API key removed');
+  } catch (err) {
+    set('api-key-status', err.message || 'Could not remove API key');
+  }
+}
+
+async function changeAccountPassword(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  if (payload.new_password !== payload.new_password_confirm) {
+    set('password-change-status', 'Passwords do not match');
+    return;
+  }
+  const button = form.querySelector('button[type=submit]');
+  if (button) button.disabled = true;
+  set('password-change-status', '');
+  try {
+    await apiJson('/api/account/password', { method: 'POST', body: JSON.stringify(payload) });
+    form.reset();
+    closePasswordModal();
+    await appAlert('Password Changed', 'Your password has been changed.', 'info');
+  } catch (err) {
+    set('password-change-status', err.message || 'Could not change password');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function startTotpSetup(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  if (button) button.disabled = true;
+  set('totp-setup-status', '');
+  try {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const data = await apiJson('/api/account/2fa/setup', { method: 'POST', body: JSON.stringify(payload) });
+    set('totp-secret', data.setup?.secret || '—');
+    set('totp-uri', data.setup?.provisioning_uri || '—');
+    const qr = document.getElementById('totp-qr');
+    if (qr) qr.innerHTML = data.setup?.qr_svg || '';
+    closeTotpSetupModal();
+    openTotpEnableModal();
+  } catch (err) {
+    set('totp-setup-status', err.message || 'Could not start 2FA setup');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function enableTotp(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  if (button) button.disabled = true;
+  set('totp-enable-status', '');
+  try {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const data = await apiJson('/api/account/2fa/enable', { method: 'POST', body: JSON.stringify(payload) });
+    form.reset();
+    document.getElementById('totp-setup-form')?.reset();
+    closeTotpEnableModal();
+    renderAccountSecurity(data.security || { totp_enabled: true });
+    await appAlert('2FA Enabled', 'Two-factor authentication is enabled for this account.', 'info');
+  } catch (err) {
+    set('totp-enable-status', err.message || 'Could not enable 2FA');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function disableTotp(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  if (button) button.disabled = true;
+  set('totp-disable-status', '');
+  try {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const data = await apiJson('/api/account/2fa/disable', { method: 'POST', body: JSON.stringify(payload) });
+    form.reset();
+    closeTotpDisableModal();
+    renderAccountSecurity(data.security || { totp_enabled: false });
+    await appAlert('2FA Disabled', 'Two-factor authentication has been disabled for this account.', 'info');
+  } catch (err) {
+    set('totp-disable-status', err.message || 'Could not disable 2FA');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function loadAdminPage() {
+  if (_authState.user?.role !== 'Admin') return;
+  initAdminAutocomplete();
+  initAdminChargerSearch();
+  set('admin-charger-status', '');
+  await Promise.all([
+    loadAdminUnadoptedChargers(),
+    loadAdminEmailSettings(),
+  ]);
+}
+
+function initAdminChargerSearch() {
+  if (_adminChargerSearchReady) return;
+  _adminChargerSearchReady = true;
+  const input = document.getElementById('admin-charger-search');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    clearTimeout(_adminChargerSearchTimer);
+    _adminChargerSearchTimer = setTimeout(() => loadAdminUnadoptedChargers(), 180);
+  });
+  input.addEventListener('search', () => loadAdminUnadoptedChargers());
+}
+
+function initAdminAutocomplete() {
+  if (_adminAutocompleteReady) return;
+  _adminAutocompleteReady = true;
+  setupAdminAutocomplete('admin-assign-email', 'assign');
+  setupAdminAutocomplete('admin-state-email', 'state');
+  setupAdminAutocomplete('admin-2fa-email', '2fa');
+  setupAdminAutocomplete('admin-email-validation-email', 'email');
+  setupAdminAutocomplete('admin-delete-email', 'delete');
+  document.addEventListener('click', event => {
+    if (!event.target.closest('.autocomplete-wrap')) hideAdminAutocomplete();
+  });
+}
+
+function setupAdminAutocomplete(inputId, purpose) {
+  const input = document.getElementById(inputId);
+  const menu = document.getElementById(`${inputId}-suggestions`);
+  if (!input || !menu) return;
+  input.addEventListener('input', () => {
+    clearAdminAutocompleteTarget(input, purpose);
+    scheduleAdminAutocomplete(input, menu, purpose);
+  });
+  input.addEventListener('focus', () => scheduleAdminAutocomplete(input, menu, purpose));
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      menu.classList.remove('open');
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      const first = menu.querySelector('.autocomplete-option');
+      if (first) {
+        event.preventDefault();
+        first.focus();
+      }
+    } else if (event.key === 'Enter' && menu.classList.contains('open')) {
+      const first = menu.querySelector('.autocomplete-option');
+      if (first) {
+        event.preventDefault();
+        first.click();
+      }
+    }
+  });
+}
+
+function clearAdminAutocompleteTarget(input, purpose) {
+  if (purpose !== 'state' && purpose !== '2fa' && purpose !== 'email' && purpose !== 'delete') return;
+  const current = _adminUserTargets[purpose];
+  if (!current || current.email === input.value.trim()) return;
+  _adminUserTargets[purpose] = null;
+  const messageByPurpose = {
+    '2fa': 'Select an account to reset its authenticator app credentials.',
+    email: 'Select an account to mark email verification as complete.',
+    state: 'Select an account to enable or disable it.',
+    delete: 'Search for an account to delete it.',
+  };
+  renderAdminAccountPanel(
+    purpose,
+    null,
+    messageByPurpose[purpose],
+  );
+  set(adminStatusId(purpose), '');
+}
+
+function scheduleAdminAutocomplete(input, menu, purpose) {
+  const query = input.value.trim();
+  clearTimeout(_adminAutocompleteTimers[input.id]);
+  if (query.length < 2) {
+    menu.classList.remove('open');
+    menu.innerHTML = '';
+    return;
+  }
+  _adminAutocompleteTimers[input.id] = setTimeout(
+    () => fetchAdminAutocomplete(input, menu, purpose, query),
+    180,
+  );
+}
+
+async function fetchAdminAutocomplete(input, menu, purpose, query) {
+  _adminAutocompleteAbort[input.id]?.abort();
+  const controller = new AbortController();
+  _adminAutocompleteAbort[input.id] = controller;
+  try {
+    const data = await apiJson(`/api/admin/users/suggest?q=${encodeURIComponent(query)}`, {
+      signal: controller.signal,
+    });
+    if (input.value.trim() !== query) return;
+    renderAdminAutocomplete(input, menu, purpose, data.users || []);
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      menu.innerHTML = '<div class="autocomplete-empty">Search failed</div>';
+      menu.classList.add('open');
+    }
+  }
+}
+
+function renderAdminAutocomplete(input, menu, purpose, users) {
+  if (!users.length) {
+    menu.innerHTML = '<div class="autocomplete-empty">No matching accounts</div>';
+    menu.classList.add('open');
+    return;
+  }
+  menu.innerHTML = users.map((user, index) => `
+    <button class="autocomplete-option" type="button" data-index="${index}">
+      <strong>${escapeHtml(user.email)}</strong>
+      <span>${escapeHtml([user.display_name || 'No display name', user.role || 'User', user.disabled ? 'Disabled' : 'Enabled', user.totp_enabled ? '2FA on' : '2FA off', user.email_verified ? 'Email verified' : 'Email pending'].join(' · '))}</span>
+    </button>
+  `).join('');
+  menu.querySelectorAll('.autocomplete-option').forEach(button => {
+    const user = users[Number(button.dataset.index)];
+    button.addEventListener('click', () => selectAdminAutocompleteUser(input, menu, purpose, user));
+    button.addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        (button.nextElementSibling || menu.querySelector('.autocomplete-option'))?.focus();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        (button.previousElementSibling || input)?.focus();
+      } else if (event.key === 'Escape') {
+        menu.classList.remove('open');
+        input.focus();
+      }
+    });
+  });
+  menu.classList.add('open');
+}
+
+function selectAdminAutocompleteUser(input, menu, purpose, user) {
+  input.value = user.email || '';
+  menu.classList.remove('open');
+  if (purpose === 'state' || purpose === '2fa' || purpose === 'email' || purpose === 'delete') {
+    _adminUserTargets[purpose] = user;
+    renderAdminAccountPanel(purpose, user);
+    set(adminStatusId(purpose), '');
+  }
+}
+
+function hideAdminAutocomplete() {
+  document.querySelectorAll('.autocomplete-menu').forEach(menu => menu.classList.remove('open'));
+}
+
+async function loadAdminUnadoptedChargers() {
+  const list = document.getElementById('admin-unadopted-list');
+  if (!list) return;
+  _adminChargerSearchAbort?.abort();
+  const serial = document.getElementById('admin-charger-search')?.value.trim() || '';
+  if (!serial) {
+    renderAdminUnadoptedChargers([]);
+    return;
+  }
+  list.innerHTML = '<div style="color:var(--muted)">Loading chargers...</div>';
+  const controller = new AbortController();
+  _adminChargerSearchAbort = controller;
+  try {
+    const data = await apiJson(`/api/admin/unadopted-chargers?serial=${encodeURIComponent(serial)}`, {
+      signal: controller.signal,
+    });
+    renderAdminUnadoptedChargers(data.chargers || []);
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      list.innerHTML = `<div style="color:var(--err)">${escapeHtml(err.message || 'Could not load unadopted chargers')}</div>`;
+    }
+  }
+}
+
+function renderAdminUnadoptedChargers(chargers) {
+  const list = document.getElementById('admin-unadopted-list');
+  if (!list) return;
+  document.getElementById('admin-assign-panel')?.classList.add('hidden');
+  _adminSelectedChargePointId = null;
+  const serial = document.getElementById('admin-charger-search')?.value.trim() || '';
+  set('admin-unadopted-count', `${chargers.length} ${chargers.length === 1 ? 'charger' : 'chargers'}`);
+  if (!chargers.length) {
+    list.innerHTML = `<div style="color:var(--muted)">${serial ? 'No unadopted chargers match that serial number.' : 'Enter a serial number to search connected unadopted chargers.'}</div>`;
+    return;
+  }
+  list.innerHTML = chargers.map(charger => `
+    <button class="charger-item admin-charger-option" type="button" data-charge-point-id="${escapeHtml(charger.charge_point_id || '')}" onclick="selectAdminCharger('${escapeJs(charger.charge_point_id)}')">
+      <div>
+        <div class="charger-name">${escapeHtml(charger.charge_point_id || 'Unknown charge point')}</div>
+        <div class="charger-meta">${escapeHtml([charger.manufacturer, charger.model, charger.serial].filter(Boolean).join(' · ') || 'Connected charger')}</div>
+        <div class="charger-meta">${escapeHtml(charger.remote_address || '')}</div>
+      </div>
+      <span class="admin-charger-cta">Assign</span>
+    </button>
+  `).join('');
+}
+
+function selectAdminCharger(chargePointId) {
+  _adminSelectedChargePointId = chargePointId;
+  document.querySelectorAll('.admin-charger-option').forEach(option => {
+    option.classList.toggle('selected', option.dataset.chargePointId === chargePointId);
+  });
+  set('admin-assign-charge-point', chargePointId);
+  set('admin-charger-status', '');
+  document.getElementById('admin-assign-panel')?.classList.remove('hidden');
+  document.getElementById('admin-assign-email')?.focus();
+}
+
+async function assignAdminCharger(event) {
+  event.preventDefault();
+  if (!_adminSelectedChargePointId) {
+    set('admin-charger-status', 'Select a charger first');
+    return;
+  }
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const payload = Object.fromEntries(new FormData(form).entries());
+  if (button) button.disabled = true;
+  set('admin-charger-status', '');
+  try {
+    const data = await apiJson(`/api/admin/unadopted-chargers/${encodeURIComponent(_adminSelectedChargePointId)}/assign`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    form.reset();
+    set('admin-charger-status', `Assigned to ${data.charger?.owner_email || payload.email}`);
+    document.getElementById('admin-assign-panel')?.classList.add('hidden');
+    _adminSelectedChargePointId = null;
+    if (data.charger?.owner_email === _authState.user?.email) {
+      await refreshAuthState();
+    } else {
+      await loadAdminUnadoptedChargers();
+    }
+  } catch (err) {
+    set('admin-charger-status', err.message || 'Could not assign charger');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function searchAdminAccount(event, panel) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type=submit]');
+  const email = String(new FormData(form).get('email') || '').trim();
+  const statusId = adminStatusId(panel);
+  if (button) button.disabled = true;
+  set(statusId, '');
+  try {
+    const data = await apiJson(`/api/admin/users/search?email=${encodeURIComponent(email)}`);
+    _adminUserTargets[panel] = data.user;
+    renderAdminAccountPanel(panel, data.user);
+  } catch (err) {
+    _adminUserTargets[panel] = null;
+    renderAdminAccountPanel(panel, null, err.message || 'Account not found');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function adminStatusId(panel) {
+  if (panel === '2fa') return 'admin-2fa-status';
+  if (panel === 'email') return 'admin-email-validation-status';
+  if (panel === 'delete') return 'admin-delete-status';
+  return 'admin-state-status';
+}
+
+function renderAdminAccountPanel(panel, user, message = '') {
+  const resultId = panel === '2fa'
+    ? 'admin-2fa-result'
+    : panel === 'email'
+      ? 'admin-email-validation-result'
+      : panel === 'delete'
+        ? 'admin-delete-result'
+        : 'admin-state-result';
+  const actionsId = panel === '2fa'
+    ? 'admin-2fa-actions'
+    : panel === 'email'
+      ? 'admin-email-validation-actions'
+      : panel === 'delete'
+        ? 'admin-delete-actions'
+        : 'admin-state-actions';
+  const result = document.getElementById(resultId);
+  const actions = document.getElementById(actionsId);
+  if (!result || !actions) return;
+  actions.innerHTML = '';
+  if (!user) {
+    result.textContent = message || 'No account selected.';
+    return;
+  }
+  const isSelf = user.id === _authState.user?.id;
+  result.innerHTML = `
+    <div><strong>${escapeHtml(user.email)}</strong></div>
+    <div>${escapeHtml(user.display_name || 'No display name')} · ${escapeHtml(user.role || 'User')}</div>
+    <div>Status: ${user.disabled ? 'Disabled' : 'Enabled'} · 2FA: ${user.totp_enabled ? 'Enabled' : 'Off'} · Email: ${user.email_verified ? 'Verified' : 'Pending'}</div>
+    ${isSelf && panel !== 'email' ? '<div style="color:var(--warn);margin-top:6px">The currently logged-in account cannot be edited here.</div>' : ''}
+  `;
+  if (panel === 'email') {
+    if (user.email_verified) {
+      actions.innerHTML = '<button class="btn btn-outline btn-sm" type="button" disabled>Email Verified</button>';
+    } else {
+      actions.innerHTML = '<button class="btn btn-teal btn-sm" type="button" onclick="verifyAdminAccountEmail()">Mark Verified</button>';
+    }
+    return;
+  }
+  if (panel === 'delete') {
+    if (isSelf) {
+      actions.innerHTML = '<button class="btn btn-danger btn-sm" type="button" disabled>Cannot delete own account</button>';
+    } else {
+      actions.innerHTML = '<button class="btn btn-danger btn-sm" type="button" onclick="deleteAdminAccount()">Delete Account</button>';
+    }
+    return;
+  }
+  if (isSelf) return;
+  if (panel === '2fa') {
+    actions.innerHTML = '<button class="btn btn-danger btn-sm" type="button" onclick="resetAdminAccount2fa()">Reset 2FA</button>';
+    return;
+  }
+  const label = user.disabled ? 'Enable Account' : 'Disable Account';
+  const klass = user.disabled ? 'btn-teal' : 'btn-danger';
+  actions.innerHTML = `<button class="btn ${klass} btn-sm" type="button" onclick="setAdminAccountDisabled(${user.disabled ? 'false' : 'true'})">${label}</button>`;
+}
+
+async function setAdminAccountDisabled(disabled) {
+  const user = _adminUserTargets.state;
+  if (!user) return;
+  const confirmed = await appConfirm({
+    title: disabled ? 'Disable Account' : 'Enable Account',
+    message: `${disabled ? 'Disable' : 'Enable'} ${user.email}?`,
+    confirmText: disabled ? 'Disable' : 'Enable',
+    variant: disabled ? 'danger' : 'info',
+  });
+  if (!confirmed) return;
+  set('admin-state-status', '');
+  try {
+    const data = await apiJson(`/api/admin/users/${encodeURIComponent(user.id)}/disabled`, {
+      method: 'POST',
+      body: JSON.stringify({ disabled }),
+    });
+    _adminUserTargets.state = data.user;
+    renderAdminAccountPanel('state', data.user);
+    set('admin-state-status', disabled ? 'Account disabled' : 'Account enabled');
+  } catch (err) {
+    set('admin-state-status', err.message || 'Could not update account');
+  }
+}
+
+async function resetAdminAccount2fa() {
+  const user = _adminUserTargets['2fa'];
+  if (!user) return;
+  const confirmed = await appConfirm({
+    title: 'Reset 2FA',
+    message: `Clear authenticator app credentials for ${user.email}?`,
+    confirmText: 'Reset 2FA',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  set('admin-2fa-status', '');
+  try {
+    const data = await apiJson(`/api/admin/users/${encodeURIComponent(user.id)}/reset-2fa`, {
+      method: 'POST',
+      body: '{}',
+    });
+    _adminUserTargets['2fa'] = data.user;
+    renderAdminAccountPanel('2fa', data.user);
+    set('admin-2fa-status', '2FA reset');
+  } catch (err) {
+    set('admin-2fa-status', err.message || 'Could not reset 2FA');
+  }
+}
+
+async function verifyAdminAccountEmail() {
+  const user = _adminUserTargets.email;
+  if (!user) return;
+  set('admin-email-validation-status', '');
+  try {
+    const data = await apiJson(`/api/admin/users/${encodeURIComponent(user.id)}/verify-email`, {
+      method: 'POST',
+      body: '{}',
+    });
+    _adminUserTargets.email = data.user;
+    renderAdminAccountPanel('email', data.user);
+    set('admin-email-validation-status', 'Email verification marked complete');
+  } catch (err) {
+    set('admin-email-validation-status', err.message || 'Could not mark email verification complete');
+  }
+}
+
+async function deleteAdminAccount() {
+  const user = _adminUserTargets.delete;
+  if (!user) return;
+  const confirmed = await appConfirm({
+    title: 'Delete Account',
+    message: `Permanently delete ${user.email} and all associated chargers and data? This cannot be undone.`,
+    confirmText: 'Delete Account',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  set('admin-delete-status', '');
+  try {
+    await apiJson(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+    _adminUserTargets.delete = null;
+    document.getElementById('admin-delete-email').value = '';
+    renderAdminAccountPanel('delete', null);
+    set('admin-delete-status', `Account ${user.email} deleted`);
+  } catch (err) {
+    set('admin-delete-status', err.message || 'Could not delete account');
+  }
+}
+
+async function loadAdminEmailSettings() {
+  try {
+    const data = await apiJson('/api/admin/email-settings');
+    renderAdminEmailSettings(data.email_settings || {});
+  } catch (err) {
+    set('admin-email-validation-global-status', err.message || 'Could not load email validation settings');
+    set('admin-smtp-summary', 'SMTP status unavailable.');
+    const btn = document.getElementById('admin-test-smtp');
+    if (btn) btn.disabled = true;
+  }
+}
+
+function renderAdminEmailSettings(settings) {
+  const regToggle = document.getElementById('admin-registration-toggle');
+  if (regToggle) regToggle.checked = settings.registration_enabled !== false;
+  const toggle = document.getElementById('admin-email-validation-toggle');
+  if (toggle) toggle.checked = settings.initial_email_validation_enabled !== false;
+  const smtpConfigured = !!settings.smtp_configured;
+  set(
+    'admin-smtp-summary',
+    smtpConfigured
+      ? `Configured: ${[settings.smtp_from, settings.smtp_host].filter(Boolean).join(' via ') || 'SMTP configured'}`
+      : 'SMTP is not configured.',
+  );
+  const btn = document.getElementById('admin-test-smtp');
+  if (btn) btn.disabled = !smtpConfigured;
+}
+
+async function setAdminRegistrationEnabled(enabled) {
+  const toggle = document.getElementById('admin-registration-toggle');
+  if (toggle) toggle.disabled = true;
+  set('admin-registration-status', '');
+  try {
+    const data = await apiJson('/api/admin/email-settings', {
+      method: 'POST',
+      body: JSON.stringify({ registration_enabled: !!enabled }),
+    });
+    renderAdminEmailSettings(data.email_settings || {});
+    set('admin-registration-status', enabled ? 'Registration enabled' : 'Registration disabled');
+  } catch (err) {
+    if (toggle) toggle.checked = !enabled;
+    set('admin-registration-status', err.message || 'Could not update registration setting');
+  } finally {
+    if (toggle) toggle.disabled = false;
+  }
+}
+
+async function setAdminEmailValidationEnabled(enabled) {
+  const toggle = document.getElementById('admin-email-validation-toggle');
+  if (toggle) toggle.disabled = true;
+  set('admin-email-validation-global-status', '');
+  try {
+    const data = await apiJson('/api/admin/email-settings', {
+      method: 'POST',
+      body: JSON.stringify({ initial_email_validation_enabled: !!enabled }),
+    });
+    renderAdminEmailSettings(data.email_settings || {});
+    set('admin-email-validation-global-status', enabled ? 'Initial email validation enabled' : 'Initial email validation disabled');
+  } catch (err) {
+    if (toggle) toggle.checked = !enabled;
+    set('admin-email-validation-global-status', err.message || 'Could not update email validation setting');
+  } finally {
+    if (toggle) toggle.disabled = false;
+  }
+}
+
+async function testAdminSmtp() {
+  const btn = document.getElementById('admin-test-smtp');
+  if (btn) btn.disabled = true;
+  set('admin-smtp-status', '');
+  try {
+    const data = await apiJson('/api/admin/email-settings/test-smtp', {
+      method: 'POST',
+      body: '{}',
+    });
+    set('admin-smtp-status', data.message || 'Test email sent');
+  } catch (err) {
+    set('admin-smtp-status', err.message || 'SMTP test failed');
+  } finally {
+    await loadAdminEmailSettings();
+  }
+}
 
 function showPage(name, options = {}) {
-  const pageName = pageNames[name] ? name : 'general';
+  let pageName = pageNames[name] ? name : 'general';
+  if (pageName === 'admin' && _authState.user?.role !== 'Admin') {
+    pageName = _authState.chargers?.length ? 'general' : 'chargers';
+  }
+  const page = document.getElementById('page-' + pageName);
+  if (!page) return;
+
+  Array.from(document.body.classList).forEach(cls => {
+    if (cls.startsWith('page-')) document.body.classList.remove(cls);
+  });
+  document.body.classList.add('page-' + pageName);
+
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
-  document.getElementById('page-' + pageName).classList.add('active');
+  page.classList.add('active');
   document.querySelector(`.nav-link[data-page="${pageName}"]`)?.classList.add('active');
   document.getElementById('header-title').textContent = pageNames[pageName] || pageName;
   if (pageName === 'settings') {
     activateSettingsSub(options.sub || 'general');
+  }
+  if (pageName === 'admin') {
+    activateAdminSub(options.sub || 'accounts');
+  }
+  if (pageName === 'chargers') {
+    renderChargerManager();
+    startChargerPageRefresh();
+  } else {
+    stopChargerPageRefresh();
+  }
+  if (pageName === 'account') {
+    activateAccountSub(options.sub || 'security');
+    loadAccountSecurityPage();
+  }
+  if (pageName === 'admin') {
+    loadAdminPage();
   }
   closeNav();
   if (!options.skipPush) updateRoute(pageName, options.sub);
@@ -1329,6 +3601,34 @@ function showPage(name, options = {}) {
 function showSub(name, options = {}) {
   showPage('settings', { sub: name, skipPush: true });
   if (!options.skipPush) updateRoute('settings', name);
+}
+
+function showAdminSub(name, options = {}) {
+  showPage('admin', { sub: name, skipPush: true });
+  if (!options.skipPush) updateRoute('admin', name);
+}
+
+function activateAdminSub(name) {
+  const subName = adminSubPaths[name] ? name : 'accounts';
+  const adminPage = document.getElementById('page-admin');
+  adminPage.querySelectorAll('.subpage').forEach(s => s.classList.remove('active'));
+  adminPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('admin-sub-' + subName)?.classList.add('active');
+  adminPage.querySelector(`.pill-tab[data-admin-sub="${subName}"]`)?.classList.add('active');
+}
+
+function showAccountSub(name, options = {}) {
+  showPage('account', { sub: name, skipPush: true });
+  if (!options.skipPush) updateRoute('account', name);
+}
+
+function activateAccountSub(name) {
+  const subName = accountSubPaths[name] ? name : 'security';
+  const accountPage = document.getElementById('page-account');
+  accountPage.querySelectorAll('.subpage').forEach(s => s.classList.remove('active'));
+  accountPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('account-sub-' + subName)?.classList.add('active');
+  accountPage.querySelector(`.pill-tab[data-account-sub="${subName}"]`)?.classList.add('active');
 }
 
 function activateSettingsSub(name) {
@@ -1341,7 +3641,11 @@ function activateSettingsSub(name) {
 }
 
 function updateRoute(page, sub) {
-  const path = page === 'settings' && sub ? settingsSubPaths[sub] : pagePaths[page];
+  let path;
+  if (page === 'settings' && sub) path = settingsSubPaths[sub];
+  else if (page === 'admin' && sub) path = adminSubPaths[sub];
+  else if (page === 'account' && sub) path = accountSubPaths[sub];
+  else path = pagePaths[page];
   if (path && window.location.pathname !== path) {
     history.pushState({ page, sub }, '', path);
   }
@@ -1353,6 +3657,12 @@ function routeFromPath(path) {
   for (const [sub, subPath] of Object.entries(settingsSubPaths)) {
     if (clean === subPath) return { page: 'settings', sub };
   }
+  for (const [sub, subPath] of Object.entries(adminSubPaths)) {
+    if (clean === subPath) return { page: 'admin', sub };
+  }
+  for (const [sub, subPath] of Object.entries(accountSubPaths)) {
+    if (clean === subPath) return { page: 'account', sub };
+  }
   for (const [page, pagePath] of Object.entries(pagePaths)) {
     if (clean === pagePath) return { page };
   }
@@ -1361,9 +3671,17 @@ function routeFromPath(path) {
 
 function applyRoute(path = window.location.pathname, options = {}) {
   const route = routeFromPath(path);
+  if (route.page === 'admin' && _authState.user?.role !== 'Admin') {
+    route.page = _authState.chargers?.length ? 'general' : 'chargers';
+    route.sub = undefined;
+  }
   showPage(route.page, { sub: route.sub, skipPush: true });
-  if (options.replace && window.location.pathname !== (route.page === 'settings' && route.sub ? settingsSubPaths[route.sub] : pagePaths[route.page])) {
-    history.replaceState(route, '', route.page === 'settings' && route.sub ? settingsSubPaths[route.sub] : pagePaths[route.page]);
+  const resolvedPath = route.page === 'settings' && route.sub ? settingsSubPaths[route.sub]
+    : route.page === 'admin' && route.sub ? adminSubPaths[route.sub]
+    : route.page === 'account' && route.sub ? accountSubPaths[route.sub]
+    : pagePaths[route.page];
+  if (options.replace && window.location.pathname !== resolvedPath) {
+    history.replaceState(route, '', resolvedPath);
   }
 }
 
@@ -1389,6 +3707,9 @@ function toggleFullscreen() {
 let _state = {};
 let _sseRetryMs = 2000;
 let _firmwareEntries = [];
+let _firmwareProgressVisible = false;
+const FIRMWARE_PROGRESS_DISMISSED_KEY = 'givevc.firmwareProgressDismissedTrace';
+let _firmwareProgressDismissedTrace = getStoredFirmwareDismissedTrace();
 let _selectedScheduleId = null;
 let _scheduleEditing = false;
 let _editingIdTag = null;
@@ -1398,6 +3719,19 @@ let _idTagPage = 1;
 let _idTagPageSize = 25;
 let _actionLogSortKey = 'ts';
 let _actionLogSortDir = 'desc';
+let _authState = { authenticated: false, user: null, chargers: [], onboarding_sessions: [] };
+let _pendingEmailVerification = { email: null, timer: null, seconds: 0 };
+let _sseStarted = false;
+let _adminSelectedChargePointId = null;
+let _adminUserTargets = { state: null, '2fa': null, email: null, delete: null };
+let _adminAutocompleteReady = false;
+let _adminAutocompleteTimers = {};
+let _adminAutocompleteAbort = {};
+let _adminChargerSearchReady = false;
+let _adminChargerSearchTimer = null;
+let _adminChargerSearchAbort = null;
+let _chargerPageRefreshTimer = null;
+let _chargerPageRefreshAbort = null;
 let _chargingTogglePending = null;
 let _chargingToggleTimeout = null;
 const CHARGE_PENDING_TIMEOUT_MS = 120000;
@@ -1405,8 +3739,27 @@ const SCHEDULE_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const CHARGE_START_STATUSES = new Set(['Available', 'Preparing']);
 const CHARGE_STOP_STATUSES = new Set(['Charging', 'SuspendedEVSE', 'SuspendedEV']);
 
+function getStoredFirmwareDismissedTrace() {
+  try {
+    return localStorage.getItem(FIRMWARE_PROGRESS_DISMISSED_KEY) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setStoredFirmwareDismissedTrace(trace) {
+  _firmwareProgressDismissedTrace = trace || null;
+  try {
+    if (trace) {
+      localStorage.setItem(FIRMWARE_PROGRESS_DISMISSED_KEY, trace);
+    } else {
+      localStorage.removeItem(FIRMWARE_PROGRESS_DISMISSED_KEY);
+    }
+  } catch (_) {}
+}
+
 function connectSSE() {
-  const es = new EventSource('/api/events');
+  const es = new EventSource(apiUrl('/api/events'));
 
   es.onmessage = (e) => {
     try {
@@ -1484,7 +3837,7 @@ function applyState(s) {
   const txt = document.getElementById('status-text');
   if (dot) dot.classList.toggle('offline', !online);
   if (txt) txt.textContent = online ? 'ONLINE' : 'OFFLINE';
-  const serial = s.charge_point_serial_number || s.charge_point_id || 'EV Charger';
+  const serial = s.charge_point_serial_number || s.charge_box_serial_number || 'EV Charger';
   set('status-serial', serial);
 
   // ── Overview stat cards ───────────────────────────
@@ -1494,12 +3847,13 @@ function applyState(s) {
 
   set('stat-power-val',    s.live_power_kw  != null ? fmt(s.live_power_kw, 2) : '—');
   set('stat-power-unit',   s.live_power_kw  != null ? 'kW' : '');
-  set('stat-session-val',  s.session_energy_kwh != null ? fmt(s.session_energy_kwh, 2) : '—');
-  set('stat-session-unit', s.session_energy_kwh != null ? 'kWh' : '');
-  set('stat-total-val',    s.total_energy_kwh   != null ? fmt(s.total_energy_kwh, 2) : '—');
-  set('stat-total-unit',   s.total_energy_kwh   != null ? 'kWh' : '');
-  set('stat-today-val',    '—');
-  set('stat-today-unit',   '');
+  const _lastKwh = s.last_session_kwh != null ? s.last_session_kwh : s.session_energy_kwh;
+  set('stat-session-val',  _lastKwh != null ? fmt(_lastKwh, 2) : '—');
+  set('stat-session-unit', _lastKwh != null ? 'kWh' : '');
+  set('stat-total-val',    s.total_energy_kwh != null ? fmt(s.total_energy_kwh, 2) : '—');
+  set('stat-total-unit',   s.total_energy_kwh != null ? 'kWh' : '');
+  set('stat-today-val',    s.today_kwh != null ? fmt(s.today_kwh, 2) : '—');
+  set('stat-today-unit',   s.today_kwh != null ? 'kWh' : '');
 
   // ── Charger hero ──────────────────────────────────
   const plugged = !!s.car_plugged_in;
@@ -1521,8 +3875,8 @@ function applyState(s) {
   }
 
   // ── Energy panel ──────────────────────────────────
-  _setEnergyVal('energy-session', s.session_energy_kwh != null ? fmt(s.session_energy_kwh, 2) : null);
-  _setEnergyVal('energy-today',   null);
+  _setEnergyVal('energy-session', _lastKwh != null ? fmt(_lastKwh, 2) : null);
+  _setEnergyVal('energy-today',   s.today_kwh != null ? fmt(s.today_kwh, 2) : null);
   _setEnergyVal('energy-month',   null);
   _setEnergyVal('energy-total',   s.total_energy_kwh != null ? fmt(s.total_energy_kwh, 2) : null);
 
@@ -1558,10 +3912,11 @@ function applyState(s) {
       : '';
   }
 
-  // ── Settings — Other tab ──────────────────────────
+  // ── Settings offline state ────────────────────────
   const offline = !s.connected;
-  const banner = document.getElementById('settings-offline-banner');
-  if (banner) banner.style.display = offline ? '' : 'none';
+  document.querySelectorAll('.settings-offline-banner').forEach(banner => {
+    banner.style.display = offline ? 'block' : 'none';
+  });
 
   // Disable all controls when offline
   ['toggle-plug-go','toggle-leds','toggle-modbus','range-current',
@@ -1588,7 +3943,15 @@ function applyState(s) {
   _syncSlider('range-rand-delay', 'rand-delay-val', s.randomised_delay_s, v => String(v), v => v);
   syncMaxEnergyState(s.max_energy_per_session_kwh, offline);
   syncDnoFuseState(s.max_import_capacity_a, offline);
-  syncSuspendTimeoutState(s.suspend_timeout_s, offline);
+  const suspendTimeoutSupported = supportsSuspendTimeout(s.firmware_version);
+  const suspendTimeoutCard = document.getElementById('card-suspend-timeout');
+  if (suspendTimeoutCard) {
+    suspendTimeoutCard.style.display = suspendTimeoutSupported ? '' : 'none';
+  }
+  if (suspendTimeoutSupported) {
+    syncSuspendTimeoutState(s.suspend_timeout_s, offline);
+  }
+  renderFirmwareProgress(s.firmware_transfer_progress, s);
 
   // CP voltage live values
   set('cp-voltage-val', s.cp_voltage_v != null ? fmt(s.cp_voltage_v, 1) : '—');
@@ -1936,7 +4299,7 @@ async function deleteSchedule(id) {
   if (!confirmed) return;
   setScheduleStatus('Deleting...', 'pending');
   try {
-    const r = await fetch(`/api/settings/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const r = await apiFetch(`/api/settings/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     _state.charging_schedule = normaliseScheduleList(_state.charging_schedule || []).filter(schedule => schedule.id !== String(id));
@@ -1951,7 +4314,7 @@ async function deleteSchedule(id) {
 async function postSchedule(url, body, pendingText) {
   setScheduleStatus(pendingText, 'pending');
   try {
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -2204,7 +4567,7 @@ async function deleteIdTag(idTag) {
   if (!confirmed) return;
   setIdTagStatus('Deleting...', 'pending');
   try {
-    const r = await fetch(`/api/settings/id-tags/${encodeURIComponent(idTag)}`, { method: 'DELETE' });
+    const r = await apiFetch(`/api/settings/id-tags/${encodeURIComponent(idTag)}`, { method: 'DELETE' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     _state.rfid_tags = normaliseIdTagList(_state.rfid_tags || []).filter(tag => tag.id_tag !== String(idTag));
@@ -2218,7 +4581,7 @@ async function deleteIdTag(idTag) {
 async function postIdTag(url, body, pendingText) {
   setIdTagStatus(pendingText, 'pending');
   try {
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -2420,7 +4783,7 @@ async function clearActionLog(btn) {
   if (!confirmed) return;
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch('/api/settings/logs', { method: 'DELETE' });
+    const r = await apiFetch('/api/settings/logs', { method: 'DELETE' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     _state.action_log = [];
@@ -2743,7 +5106,7 @@ async function setChargeMode(mode, cardEl) {
   if (statusEl) { statusEl.style.display = ''; statusEl.className = 'settings-status pending'; statusEl.textContent = 'Switching mode…'; }
 
   try {
-    const r = await fetch('/api/settings/mode', {
+    const r = await apiFetch('/api/settings/mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
@@ -2788,14 +5151,14 @@ async function sendCpVoltageRange(btn) {
   if (btn) btn.disabled = true;
   _showStatus(statusEl, 'Sending…', 'pending', 0);
   try {
-    const r1 = await fetch('/api/settings/config', {
+    const r1 = await apiFetch('/api/settings/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: 'ChargingStateBCPVoltageLowerLimit', value: String(minWire) }),
     });
     const d1 = await r1.json();
     if (!r1.ok) throw new Error(d1.error || r1.statusText);
-    const r2 = await fetch('/api/settings/config', {
+    const r2 = await apiFetch('/api/settings/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: 'ChargingStateBCPVoltageHigherLimit', value: String(maxWire) }),
@@ -2815,7 +5178,7 @@ async function doReadCpVoltage(btn) {
   if (btn) btn.disabled = true;
   _showStatus(statusEl, 'Reading…', 'pending', 0);
   try {
-    const r = await fetch('/api/settings/read-cp-voltage', { method: 'POST' });
+    const r = await apiFetch('/api/settings/read-cp-voltage', { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     if (data.status !== 'Accepted') throw new Error(data.status || 'Charger rejected request');
@@ -2832,7 +5195,7 @@ async function loadFirmwareManifest() {
   const statusEl = _statusEl('firmware-status');
   if (select) select.innerHTML = '<option value="">Loading firmware…</option>';
   try {
-    const r = await fetch('/api/firmware/manifest');
+    const r = await apiFetch('/api/firmware/manifest');
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || data.manifest_error || r.statusText);
     _firmwareEntries = data.entries || [];
@@ -2872,22 +5235,137 @@ function syncFirmwareAction() {
   const filename = select?.value;
   const entry = _firmwareEntries.find(e => e.filename === filename);
   const offline = !_state.connected;
+  const updateBusy = !!_state.firmware_transfer_progress?.active
+    || ['Requested', 'Downloading', 'Downloaded', 'Installing'].includes(_state.firmware_update_state);
 
   const pill = document.getElementById('firmware-update-pill');
   if (pill) pill.style.display = _firmwareEntries.some(e => e.action === 'Upgrade') ? '' : 'none';
 
   if (!entry) {
     if (btn) { btn.textContent = 'Install'; btn.disabled = true; }
-    if (select) select.disabled = offline || !_firmwareEntries.length;
+    if (select) select.disabled = offline || updateBusy || !_firmwareEntries.length;
     return;
   }
 
   const action = firmwareAction(entry.version, _state.firmware_version);
   if (btn) {
     btn.textContent = action;
-    btn.disabled = offline;
+    btn.disabled = offline || updateBusy;
   }
-  if (select) select.disabled = offline;
+  if (select) select.disabled = offline || updateBusy;
+}
+
+function firmwareProgressTrace(progress, state = _state, fallback = {}) {
+  const direct = progress?.trace || fallback.trace;
+  if (direct) return String(direct);
+  if (!progress) return null;
+  const started = state?.firmware_update_started_at || '';
+  const filename = state?.firmware_update_target_file || progress?.filename || fallback.filename || '';
+  const synthetic = `${started}:${filename}`;
+  return synthetic !== ':' ? synthetic : null;
+}
+
+function openFirmwareProgressModal(options = {}) {
+  const backdrop = document.getElementById('firmware-progress-backdrop');
+  if (!backdrop) return;
+  _firmwareProgressVisible = true;
+  if (options.trace || options.resetDismissed) setStoredFirmwareDismissedTrace(null);
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  renderFirmwareProgress(options.progress || null, _state, options);
+}
+
+function closeFirmwareProgressModal() {
+  const backdrop = document.getElementById('firmware-progress-backdrop');
+  if (!backdrop) return;
+  const closeBtn = document.getElementById('firmware-progress-close');
+  if (closeBtn && (closeBtn.dataset.action !== 'close' || closeBtn.disabled)) return;
+  const trace = firmwareProgressTrace(_state?.firmware_transfer_progress, _state);
+  if (trace) setStoredFirmwareDismissedTrace(trace);
+  _firmwareProgressVisible = false;
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  if (!document.querySelector('.app-modal-backdrop.open')) document.body.classList.remove('modal-open');
+}
+
+function renderFirmwareProgress(progress, state = _state, fallback = {}) {
+  const backdrop = document.getElementById('firmware-progress-backdrop');
+  if (!backdrop) return;
+  const trace = firmwareProgressTrace(progress, state, fallback);
+  const active = !!progress?.active;
+  const eventName = String(progress?.event || '');
+  const terminalEvent = ['installed', 'version_mismatch', 'firmware_status_failed', 'update_request_failed', 'transfer_cancelled'].includes(eventName);
+  const shouldAutoOpen = progress && trace && trace !== _firmwareProgressDismissedTrace && (active || terminalEvent);
+  const dismissedCurrent = trace && trace === _firmwareProgressDismissedTrace;
+  if (shouldAutoOpen && !dismissedCurrent && !_firmwareProgressVisible) {
+    _firmwareProgressVisible = true;
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+  }
+  if (!_firmwareProgressVisible && !fallback.status) return;
+
+  const status = progress?.status || fallback.status || 'Preparing firmware…';
+  const filename = progress?.filename || fallback.filename || state?.firmware_update_target_file || '—';
+  const percentRaw = progress?.percent ?? fallback.percent ?? 0;
+  const percent = Math.max(0, Math.min(100, Number(percentRaw) || 0));
+  const chunksSent = Number(progress?.chunks_sent || 0);
+  const chunksTotal = Number(progress?.chunks_total || 0);
+  const bytesSent = Number(progress?.bytes_sent || 0);
+  const bytesTotal = Number(progress?.bytes_total || 0);
+  const isError = !!progress?.error || String(status).toLowerCase().includes('failed');
+  const transferEvents = new Set(['download_started', 'request_received', 'control_frame_sent', 'control_frame_received', 'chunk_sent', 'ocpp_downloading']);
+  const restartingEvents = new Set(['applying', 'restarting', 'ocpp_installing']);
+  const terminalEvents = new Set(['installed', 'version_mismatch', 'firmware_status_failed', 'update_request_failed', 'transfer_cancelled']);
+  const isTransferring = active && transferEvents.has(eventName) && (chunksTotal > 0 || bytesTotal > 0 || chunksSent > 0 || eventName === 'chunk_sent');
+  const isRestarting = restartingEvents.has(eventName) || ['Downloaded', 'Installing'].includes(state?.firmware_update_state);
+  const isTerminal = terminalEvents.has(eventName) || ['Installed', 'Failed', 'Cancelled'].includes(state?.firmware_update_state);
+
+  set('firmware-progress-status', status);
+  set('firmware-progress-file', `Firmware file: ${filename}`);
+  set('firmware-progress-ocpp', `Update state: ${state?.firmware_update_state || state?.firmware_status || 'Waiting'}`);
+  set('firmware-progress-percent', `${Math.round(percent)}%`);
+
+  const fill = document.getElementById('firmware-progress-fill');
+  if (fill) {
+    fill.style.width = `${percent}%`;
+    fill.classList.toggle('err', isError);
+  }
+
+  const phaseEvents = new Set(['applying', 'restarting', 'ocpp_installing', 'installed', 'version_mismatch', 'firmware_status_failed', 'update_request_failed']);
+  const chunksText = phaseEvents.has(eventName)
+    ? status
+    : chunksTotal > 0
+    ? `Chunk ${Math.min(chunksSent, chunksTotal)} of ${chunksTotal}`
+    : bytesTotal > 0
+      ? `${formatBytes(bytesSent)} of ${formatBytes(bytesTotal)}`
+      : 'Waiting for charger download request';
+  set('firmware-progress-chunks', progress?.error ? String(progress.error) : chunksText);
+
+  const actionBtn = document.getElementById('firmware-progress-close');
+  if (actionBtn) {
+    actionBtn.disabled = false;
+    actionBtn.classList.toggle('btn-danger', isTransferring);
+    actionBtn.classList.toggle('btn-outline', !isTransferring);
+    if (isTransferring) {
+      actionBtn.textContent = 'Cancel';
+      actionBtn.dataset.action = 'cancel';
+      actionBtn.onclick = cancelFirmwareTransfer;
+    } else {
+      actionBtn.textContent = 'Close';
+      actionBtn.dataset.action = 'close';
+      actionBtn.onclick = closeFirmwareProgressModal;
+      actionBtn.disabled = isRestarting || (active && !isTerminal && !isError);
+    }
+  }
+}
+
+function formatBytes(value) {
+  const bytes = Number(value) || 0;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
 }
 
 async function doInstallFirmware(btn) {
@@ -2900,8 +5378,9 @@ async function doInstallFirmware(btn) {
   }
   if (btn) btn.disabled = true;
   _showStatus(statusEl, 'Preparing firmware…', 'pending', 0);
+  openFirmwareProgressModal({ filename, status: 'Preparing firmware…', percent: 0, resetDismissed: true });
   try {
-    const r = await fetch('/api/firmware/install', {
+    const r = await apiFetch('/api/firmware/install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename }),
@@ -2909,11 +5388,43 @@ async function doInstallFirmware(btn) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     _showStatus(statusEl, 'Update requested', 'ok');
+    renderFirmwareProgress(_state.firmware_transfer_progress, _state, {
+      filename,
+      status: 'Update requested. Waiting for charger download request…',
+      percent: 0,
+    });
     await loadFirmwareManifest();
   } catch (err) {
     _showStatus(statusEl, err.message || 'Firmware update failed', 'err', 0);
+    renderFirmwareProgress(null, _state, {
+      filename,
+      status: err.message || 'Firmware update failed',
+      percent: 0,
+    });
   } finally {
     syncFirmwareAction();
+  }
+}
+
+async function cancelFirmwareTransfer() {
+  const btn = document.getElementById('firmware-progress-close');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Cancelling…';
+  }
+  try {
+    const r = await apiFetch('/api/firmware/cancel', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    if (data.firmware_transfer_progress) {
+      _state.firmware_transfer_progress = data.firmware_transfer_progress;
+      _state.firmware_update_state = data.status || 'Cancelled';
+    }
+    renderFirmwareProgress(_state.firmware_transfer_progress, _state);
+  } catch (err) {
+    renderFirmwareProgress(_state.firmware_transfer_progress, _state, {
+      status: err.message || 'Unable to cancel firmware transfer',
+    });
   }
 }
 
@@ -2937,6 +5448,11 @@ function compareFirmwareVersions(targetVersion, currentVersion) {
   return 0;
 }
 
+function supportsSuspendTimeout(firmwareVersion = _state.firmware_version) {
+  return firmwareVersionParts(firmwareVersion).length > 0
+    && compareFirmwareVersions(firmwareVersion, '1.14') >= 0;
+}
+
 function firmwareVersionParts(version) {
   if (!version) return [];
   const tail = String(version).trim().split('_').pop();
@@ -2957,7 +5473,7 @@ async function doRefreshConfig(btn) {
   if (btn) btn.disabled = true;
   try {
     const log = _logOcppEnabled() ? '?log=1' : '';
-    const r = await fetch(`/api/settings/refresh${log}`, { method: 'POST' });
+    const r = await apiFetch(`/api/settings/refresh${log}`, { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
   } catch (err) {
@@ -2973,7 +5489,7 @@ async function sendPlugAndGo(toggleEl) {
   toggleEl.disabled = true;
   _showStatus(statusEl, 'Saving…', 'pending', 0);
   try {
-    const r = await fetch('/api/settings/plug-and-go', {
+    const r = await apiFetch('/api/settings/plug-and-go', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
@@ -3006,7 +5522,7 @@ async function sendConfig(key, value, triggerEl) {
   _showStatus(statusEl, 'Sending…', 'pending', 0);
 
   try {
-    const r = await fetch('/api/settings/config', {
+    const r = await apiFetch('/api/settings/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value }),
@@ -3053,7 +5569,7 @@ async function saveMaxEnergyPerSession(kwh, triggerEl) {
   if (triggerEl) triggerEl.disabled = true;
   _showStatus(statusEl, 'Saving…', 'pending', 0);
   try {
-    const r = await fetch('/api/settings/max-energy', {
+    const r = await apiFetch('/api/settings/max-energy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kwh }),
@@ -3087,7 +5603,7 @@ async function doUnlock() {
   if (btn) btn.disabled = true;
   _showStatus(statusEl, 'Sending…', 'pending', 0);
   try {
-    const r = await fetch('/api/settings/unlock', { method: 'POST' });
+    const r = await apiFetch('/api/settings/unlock', { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     _showStatus(statusEl, data.status === 'Unlocked' ? 'Port unlocked' : (data.status || 'Done'), 'ok');
@@ -3106,7 +5622,7 @@ async function doToggleCharging(btn) {
   syncChargeAction(_state);
   let errorMessage = '';
   try {
-    const r = await fetch('/api/charging/toggle', { method: 'POST' });
+    const r = await apiFetch('/api/charging/toggle', { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     if (data.status && data.status !== 'Accepted') {
@@ -3142,7 +5658,7 @@ async function doReset(type) {
   if (btn) btn.disabled = true;
   _showStatus(statusEl, 'Sending…', 'pending', 0);
   try {
-    const r = await fetch('/api/settings/reset', {
+    const r = await apiFetch('/api/settings/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type }),
@@ -3161,22 +5677,79 @@ async function doReset(type) {
 // Theme (light / dark / system)
 // ═══════════════════════════════════════════════════
 const _darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+const AUTH_THEME_KEY = 'authTheme';
+const LEGACY_THEME_KEY = 'theme';
+const THEME_PREFS = new Set(['light', 'dark', 'system']);
 
-function _applyThemePref(pref) {
-  const dark = pref === 'dark' || (pref === 'system' && _darkMQ.matches);
-  document.documentElement.classList.toggle('dark', dark);
+function normaliseThemePref(pref) {
+  pref = String(pref || '').trim().toLowerCase();
+  return THEME_PREFS.has(pref) ? pref : 'system';
 }
 
-function setTheme(pref) {
-  localStorage.setItem('theme', pref);
-  _applyThemePref(pref);
+function getPreAuthTheme() {
+  return normaliseThemePref(localStorage.getItem(AUTH_THEME_KEY) || localStorage.getItem(LEGACY_THEME_KEY) || 'system');
+}
+
+function getEffectiveThemePref() {
+  return normaliseThemePref(_authState?.user?.theme_preference || getPreAuthTheme());
+}
+
+function _applyThemePref(pref) {
+  pref = normaliseThemePref(pref);
+  const dark = pref === 'dark' || (pref === 'system' && _darkMQ.matches);
+  document.documentElement.classList.toggle('dark', dark);
+  syncThemeControls(pref);
+}
+
+function syncThemeControls(pref = getEffectiveThemePref()) {
+  pref = normaliseThemePref(pref);
   const sel = document.getElementById('select-theme');
   if (sel && sel.value !== pref) sel.value = pref;
+  ['light', 'dark', 'system'].forEach(value => {
+    document.getElementById(`auth-theme-${value}`)?.classList.toggle('active', pref === value);
+  });
+}
+
+function applyEffectiveTheme() {
+  _applyThemePref(getEffectiveThemePref());
+}
+
+function setPreAuthTheme(pref) {
+  pref = normaliseThemePref(pref);
+  localStorage.setItem(AUTH_THEME_KEY, pref);
+  if (!_authState?.authenticated || !_authState.user?.theme_preference) {
+    _applyThemePref(pref);
+  } else {
+    syncThemeControls(getEffectiveThemePref());
+  }
+}
+
+async function setTheme(pref) {
+  pref = normaliseThemePref(pref);
+  _applyThemePref(pref);
+  if (!_authState?.authenticated) {
+    localStorage.setItem(AUTH_THEME_KEY, pref);
+    return;
+  }
+
+  try {
+    const data = await apiJson('/api/account/theme', {
+      method: 'POST',
+      body: JSON.stringify({ theme: pref }),
+    });
+    if (data.user) {
+      _authState.user = data.user;
+      _applyThemePref(getEffectiveThemePref());
+    }
+  } catch (err) {
+    _applyThemePref(getEffectiveThemePref());
+    await appAlert('Theme Not Saved', err.message || 'Could not save theme preference', 'danger');
+  }
 }
 
 // React to OS preference changes when in system mode
 _darkMQ.addEventListener('change', () => {
-  if ((localStorage.getItem('theme') || 'system') === 'system') _applyThemePref('system');
+  if (getEffectiveThemePref() === 'system') _applyThemePref('system');
 });
 
 // ═══════════════════════════════════════════════════
@@ -3198,8 +5771,8 @@ function _logOcppEnabled() {
 async function _doAutoRefresh() {
   if (!_state.connected) return;
   const log = _logOcppEnabled() ? '?log=1' : '';
-  try { await fetch(`/api/settings/refresh${log}`, { method: 'POST' }); } catch (_) {}
-  try { await fetch(`/api/settings/trigger-meter-values${log}`, { method: 'POST' }); } catch (_) {}
+  try { await apiFetch(`/api/settings/refresh${log}`, { method: 'POST' }); } catch (_) {}
+  try { await apiFetch(`/api/settings/trigger-meter-values${log}`, { method: 'POST' }); } catch (_) {}
 }
 
 function _startRefreshTimer(intervalS) {
@@ -3220,12 +5793,10 @@ function onLogOcppToggle(checked) {
 
 // ── Boot ─────────────────────────────────────────────
 (function initSettings() {
-  const theme = localStorage.getItem('theme') || 'system';
+  const theme = getEffectiveThemePref();
   _applyThemePref(theme);
 
   const interval = _getRefreshInterval();
-  const sel = document.getElementById('select-theme');
-  if (sel) sel.value = theme;
   const rng = document.getElementById('range-refresh-interval');
   if (rng) rng.value = interval;
   const lbl = document.getElementById('refresh-interval-val');
@@ -3237,9 +5808,7 @@ function onLogOcppToggle(checked) {
   _startRefreshTimer(interval);
 })();
 
-applyRoute(window.location.pathname, { replace: true });
-connectSSE();
-loadFirmwareManifest();
+refreshAuthState();
 </script>
 </body>
 </html>

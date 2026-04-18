@@ -35,10 +35,13 @@ class ChargePointSession:
         websocket: web.WebSocketResponse,
         coordinator: OcppCoordinator,
         charge_point_id: str | None,
+        stateful: bool = True,
     ) -> None:
         self.websocket = websocket
         self.coordinator = coordinator
         self.charge_point_id = charge_point_id
+        self.stateful = stateful
+        self.session_id = uuid4().hex
         self._send_lock = asyncio.Lock()
         self._pending_calls: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._handlers: dict[str, Handler] = {
@@ -93,6 +96,8 @@ class ChargePointSession:
             frame = json.loads(message.data)
         except json.JSONDecodeError:
             self.coordinator.record_ocpp_frame(
+                charge_point_id=self.charge_point_id,
+                session_id=self.session_id,
                 direction="inbound",
                 frame_type="invalid_json",
                 raw_frame=message.data,
@@ -102,6 +107,8 @@ class ChargePointSession:
             return
 
         self.coordinator.record_ocpp_frame(
+            charge_point_id=self.charge_point_id,
+            session_id=self.session_id,
             direction="inbound",
             frame_type=str(frame[0]) if isinstance(frame, list) and frame else "unknown",
             raw_frame=frame,
@@ -159,7 +166,10 @@ class ChargePointSession:
     # ── OCPP action handlers ─────────────────────────────────────────────
 
     async def _handle_boot_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
-        await self.coordinator.async_record_boot(self.charge_point_id, payload)
+        if self.stateful:
+            await self.coordinator.async_record_boot(self.charge_point_id, payload)
+        else:
+            await self.coordinator.async_record_unmanaged_boot(self.session_id, self.charge_point_id, payload)
         return {
             "currentTime": _ocpp_now(),
             "interval": 15,
@@ -168,42 +178,94 @@ class ChargePointSession:
 
     async def _handle_heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         del payload
-        await self.coordinator.async_record_heartbeat()
+        if self.stateful:
+            await self.coordinator.async_record_heartbeat(self.charge_point_id)
+        else:
+            await self.coordinator.async_record_unmanaged_heartbeat(self.session_id)
         return {"currentTime": _ocpp_now()}
 
     async def _handle_status_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
-        await self.coordinator.async_record_status(payload)
+        if self.stateful:
+            await self.coordinator.async_record_status(self.charge_point_id, payload)
+        else:
+            await self.coordinator.async_record_unmanaged_status(self.session_id, payload)
         return {}
 
     async def _handle_authorize(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.coordinator.debug_logging:
             _LOGGER.debug("Authorize payload: %s", payload)
         response = {"idTagInfo": {"status": "Accepted"}}
-        self.coordinator.record_authorize_exchange(payload, response)
+        self.coordinator.record_authorize_exchange(
+            payload,
+            response,
+            charge_point_id=self.charge_point_id,
+            session_id=self.session_id,
+        )
         return response
 
     async def _handle_start_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
-        tx_id = await self.coordinator.async_start_transaction_from_charger(payload)
+        if not self.stateful:
+            self.coordinator.record_ocpp_frame(
+                charge_point_id=self.charge_point_id,
+                session_id=self.session_id,
+                direction="internal",
+                frame_type="passive",
+                action="StartTransaction",
+                payload=payload,
+                note="Ignored StartTransaction from passive unadopted charger session",
+            )
+            return {"transactionId": 0, "idTagInfo": {"status": "Accepted"}}
+        tx_id = await self.coordinator.async_start_transaction_from_charger(self.charge_point_id, payload)
         response = {"transactionId": tx_id, "idTagInfo": {"status": "Accepted"}}
-        self.coordinator.record_start_transaction_exchange(payload, response)
+        self.coordinator.record_start_transaction_exchange(
+            payload,
+            response,
+            charge_point_id=self.charge_point_id,
+            session_id=self.session_id,
+        )
         return response
 
     async def _handle_stop_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
-        await self.coordinator.async_stop_transaction_from_charger(payload)
+        if not self.stateful:
+            self.coordinator.record_ocpp_frame(
+                charge_point_id=self.charge_point_id,
+                session_id=self.session_id,
+                direction="internal",
+                frame_type="passive",
+                action="StopTransaction",
+                payload=payload,
+                note="Ignored StopTransaction from passive unadopted charger session",
+            )
+            return {"idTagInfo": {"status": "Accepted"}}
+        await self.coordinator.async_stop_transaction_from_charger(self.charge_point_id, payload)
         response = {"idTagInfo": {"status": "Accepted"}}
-        self.coordinator.record_stop_transaction_exchange(payload, response)
+        self.coordinator.record_stop_transaction_exchange(
+            payload,
+            response,
+            charge_point_id=self.charge_point_id,
+            session_id=self.session_id,
+        )
         return response
 
     async def _handle_meter_values(self, payload: dict[str, Any]) -> dict[str, Any]:
-        await self.coordinator.async_record_meter_values(payload)
+        if not self.stateful:
+            await self.coordinator.async_record_unmanaged_heartbeat(self.session_id)
+            return {}
+        await self.coordinator.async_record_meter_values(self.charge_point_id, payload)
         return {}
 
     async def _handle_firmware_status(self, payload: dict[str, Any]) -> dict[str, Any]:
-        await self.coordinator.async_record_firmware_status(payload)
+        if not self.stateful:
+            await self.coordinator.async_record_unmanaged_heartbeat(self.session_id)
+            return {}
+        await self.coordinator.async_record_firmware_status(self.charge_point_id, payload)
         return {}
 
     async def _handle_diagnostics_status(self, payload: dict[str, Any]) -> dict[str, Any]:
-        await self.coordinator.async_record_diagnostics_status(payload)
+        if not self.stateful:
+            await self.coordinator.async_record_unmanaged_heartbeat(self.session_id)
+            return {}
+        await self.coordinator.async_record_diagnostics_status(self.charge_point_id, payload)
         return {}
 
     # ── Frame I/O ────────────────────────────────────────────────────────
@@ -213,6 +275,8 @@ class ChargePointSession:
             _LOGGER.debug("Outbound OCPP frame: %s", frame)
 
         self.coordinator.record_ocpp_frame(
+            charge_point_id=self.charge_point_id,
+            session_id=self.session_id,
             direction="outbound",
             frame_type=str(frame[0]) if frame else "unknown",
             action=frame[2] if len(frame) > 2 and isinstance(frame[2], str) else None,
@@ -227,6 +291,8 @@ class ChargePointSession:
         self, unique_id: str | None, error_code: str, error_description: str
     ) -> None:
         self.coordinator.record_call_error(
+            charge_point_id=self.charge_point_id,
+            session_id=self.session_id,
             unique_id=unique_id,
             error_code=error_code,
             error_description=error_description,

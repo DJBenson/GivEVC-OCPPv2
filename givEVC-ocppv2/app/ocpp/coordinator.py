@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import itertools
 import json
 import logging
 import re
+import socket
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 
@@ -27,6 +30,7 @@ MAX_STORED_OCPP_FRAMES = 500
 MAX_STORED_ACTION_LOGS = 500
 DEFAULT_REMOTE_ID_TAG = "HA-REMOTE"
 DEFAULT_EVSE_MAX_CURRENT = 32.0
+FIRMWARE_INSTALLING_TIMEOUT = timedelta(minutes=10)
 _tx_counter = itertools.count(1)
 CHARGE_START_STATUSES = {"Available", "Preparing"}
 CHARGE_STOP_STATUSES = {"Charging", "SuspendedEVSE", "SuspendedEV"}
@@ -38,6 +42,17 @@ _PERSIST_FIELDS = (
     "manufacturer",
     "model",
     "firmware_version",
+    "firmware_status",
+    "firmware_update_state",
+    "firmware_update_target_file",
+    "firmware_update_target_version",
+    "firmware_update_previous_version",
+    "firmware_update_started_at",
+    "firmware_update_download_completed_at",
+    "firmware_update_install_started_at",
+    "firmware_update_expected_reconnect_by",
+    "firmware_update_completed_at",
+    "firmware_update_failure_reason",
     "charge_point_serial_number",
     "charge_box_serial_number",
     "last_boot_notification",
@@ -61,42 +76,74 @@ _PERSIST_FIELDS = (
 )
 
 
+def _assert_safe_url(url: str) -> None:
+    """Raise ValueError if the URL resolves to a private or loopback address."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"Firmware URL must use http or https, got: {parsed.scheme!r}")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Firmware URL has no hostname")
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except OSError as err:
+        raise ValueError(f"Cannot resolve firmware URL hostname {hostname!r}: {err}") from err
+    for _family, _type, _proto, _canonname, sockaddr in infos:
+        addr = ipaddress.ip_address(sockaddr[0])
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError(
+                f"Firmware URL {url!r} resolves to a non-routable address ({addr}) — blocked to prevent SSRF"
+            )
+
+
 class OcppCoordinator:
     """Manage charger state, persistence, and SSE fan-out."""
 
     def __init__(
         self,
         listen_port: int,
-        state_path: Path,
+        state_path: Path | None = None,
+        state_store: Any | None = None,
         firmware_directory: Path | None = None,
         firmware_server_port: int = 9688,
+        firmware_public_host: str | None = None,
+        firmware_public_port: int | None = None,
         firmware_manifest_url: str | None = None,
-        adopt_first_charger: bool = True,
-        expected_charge_point_id: str | None = None,
         debug_logging: bool = False,
     ) -> None:
         self.listen_port = listen_port
         self._state_path = state_path
+        self._state_store = state_store
         self.firmware_directory = firmware_directory
         self.firmware_server_port = firmware_server_port
+        self.firmware_public_host = str(firmware_public_host).strip() if firmware_public_host else None
+        self.firmware_public_port = firmware_public_port or firmware_server_port
         self.firmware_manifest_url = firmware_manifest_url
-        self._adopt_first_charger = adopt_first_charger
-        self._expected_charge_point_id = expected_charge_point_id
         self.debug_logging = debug_logging
         self.data = ChargerState()
+        self._connected_charge_points: dict[str, dict[str, Any]] = {}
         self._sse_queues: list[asyncio.Queue] = []
-        self._ocpp_caller: Any = None
-        self._firmware_cleanup_path: Path | None = None
-        self._firmware_cleanup_task: asyncio.Task | None = None
+        self._ocpp_callers: dict[str, Any] = {}
+        self._charge_point_command_authorizer: Callable[[str | None], bool] | None = None
+        self._firmware_download_locks: dict[str, asyncio.Lock] = {}
 
     # ── Persistence ──────────────────────────────────────────────────────
 
     def load(self) -> None:
-        """Restore persisted state from disk at startup."""
-        if not self._state_path.exists():
+        """Restore persisted state at startup."""
+        raw: dict[str, Any] | None = None
+        if self._state_store is not None:
+            raw = self._state_store.load_coordinator_state(self._state_path)
+        elif self._state_path is not None and self._state_path.exists():
+            try:
+                raw = json.loads(self._state_path.read_text())
+            except Exception:
+                _LOGGER.exception("Failed to load persisted state — starting fresh")
+                return
+        if not raw:
             return
+
         try:
-            raw = json.loads(self._state_path.read_text())
             for field in _PERSIST_FIELDS:
                 if field not in raw:
                     continue
@@ -108,20 +155,25 @@ class OcppCoordinator:
             self.data.charging_schedule = _normalise_schedule_list(self.data.charging_schedule)
             self.data.rfid_tags = _normalise_rfid_tag_list(self.data.rfid_tags)
             self.data.transaction_active = _is_charging_status(self.data.status)
-            _LOGGER.info("Restored state from %s", self._state_path)
+            _LOGGER.info("Restored coordinator state")
         except Exception:
             _LOGGER.exception("Failed to load persisted state — starting fresh")
 
     def _save(self) -> None:
-        """Write persisted fields to disk synchronously (called from async context)."""
+        """Write persisted fields synchronously (called from async context)."""
         try:
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot: dict[str, Any] = {}
             for field in _PERSIST_FIELDS:
                 value = getattr(self.data, field)
                 if isinstance(value, datetime):
                     value = value.isoformat()
                 snapshot[field] = value
+            if self._state_store is not None:
+                self._state_store.save_coordinator_state(snapshot)
+                return
+            if self._state_path is None:
+                return
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
             self._state_path.write_text(json.dumps(snapshot, indent=2))
         except Exception:
             _LOGGER.exception("Failed to persist state")
@@ -150,35 +202,300 @@ class OcppCoordinator:
         self._push_sse()
         if persist:
             self._save()
+            self._save_active_charger_snapshot()
+
+    def charger_snapshot_for(self, charge_point_id: str | None) -> dict[str, Any] | None:
+        charge_point_id = str(charge_point_id or "").strip()
+        if not charge_point_id or self._state_store is None:
+            return None
+        loader = getattr(self._state_store, "load_charger_state", None)
+        if loader is None:
+            return None
+        return loader(charge_point_id)
+
+    def state_for_charge_point(self, charge_point_id: str | None) -> ChargerState:
+        charge_point_id = str(charge_point_id or "").strip()
+        if self._is_selected_charge_point(charge_point_id):
+            return self.data
+        state = _state_from_snapshot(self.charger_snapshot_for(charge_point_id) or {})
+        if charge_point_id:
+            state.charge_point_id = charge_point_id
+        return state
+
+    def _persist_charge_point_state(
+        self,
+        charge_point_id: str | None,
+        state: ChargerState,
+        *,
+        persist: bool = True,
+        notify: bool = True,
+    ) -> None:
+        charge_point_id = str(charge_point_id or state.charge_point_id or "").strip()
+        if self._is_selected_charge_point(charge_point_id):
+            if persist:
+                self._save()
+                self._save_active_charger_snapshot(charge_point_id)
+            if notify:
+                self._push_sse()
+            return
+        if persist:
+            snapshot = _state_to_dict(state)
+            snapshot["charge_point_id"] = charge_point_id
+            self._save_charger_snapshot(charge_point_id, snapshot)
+        if notify:
+            self._push_sse()
+
+    def command_session_available(self, charge_point_id: str | None) -> bool:
+        charge_point_id = str(charge_point_id or "").strip()
+        caller = self._ocpp_callers.get(charge_point_id)
+        websocket = getattr(caller, "websocket", None)
+        return bool(caller is not None and not getattr(websocket, "closed", False))
+
+    def _save_active_charger_snapshot(self, charge_point_id: str | None = None) -> None:
+        charge_point_id = str(charge_point_id or self.data.charge_point_id or "").strip()
+        if not charge_point_id:
+            return
+        snapshot = _state_to_dict(self.data)
+        snapshot["charge_point_id"] = charge_point_id
+        self._save_charger_snapshot(charge_point_id, snapshot)
+
+    def _save_connected_charge_point_snapshot(self, session_id: str | None) -> None:
+        if not session_id:
+            return
+        item = self._connected_charge_points.get(session_id)
+        if not item:
+            return
+        charge_point_id = str(item.get("charge_point_id") or "").strip()
+        if not charge_point_id:
+            return
+        snapshot = self.charger_snapshot_for(charge_point_id) or {}
+        status = item.get("status")
+        snapshot.update(
+            {
+                "connected": True,
+                "connection_state": item.get("connection_state") or "connected",
+                "charge_point_id": charge_point_id,
+                "manufacturer": item.get("manufacturer"),
+                "model": item.get("model"),
+                "firmware_version": item.get("firmware"),
+                "charge_point_serial_number": item.get("charge_point_serial_number")
+                or item.get("serial"),
+                "charge_box_serial_number": item.get("charge_box_serial_number"),
+                "websocket_remote_address": item.get("remote_address"),
+                "local_ip_address": item.get("local_ip_address") or item.get("remote_address"),
+                "firmware_server_host": item.get("firmware_server_host") or item.get("local_ip_address"),
+                "status": status,
+                "error_code": item.get("error_code"),
+                "vendor_error_code": item.get("vendor_error_code"),
+                "car_plugged_in": _is_car_plugged_in_status(status),
+                "last_seen": item.get("last_seen"),
+            }
+        )
+        self._save_charger_snapshot(charge_point_id, snapshot)
+        self._push_sse()
+
+    def _save_charger_snapshot(self, charge_point_id: str, snapshot: dict[str, Any]) -> None:
+        if self._state_store is None:
+            return
+        saver = getattr(self._state_store, "save_charger_state", None)
+        if saver is None:
+            return
+        try:
+            snapshot_to_save = dict(snapshot)
+            snapshot_to_save.pop("firmware_transfer_progress", None)
+            saver(charge_point_id, snapshot_to_save)
+        except Exception:
+            _LOGGER.exception("Failed to persist charger snapshot for %s", charge_point_id)
 
     # ── Connection lifecycle ─────────────────────────────────────────────
 
-    def can_accept_charge_point(self, candidate_id: str | None) -> bool:
-        if self._expected_charge_point_id:
-            return candidate_id == self._expected_charge_point_id
-        return self._adopt_first_charger or candidate_id == self.data.charge_point_id
+    def connected_charge_points(self) -> list[dict[str, Any]]:
+        items = [dict(item) for item in self._connected_charge_points.values()]
+        active_snapshot = self._active_state_charge_point()
+        if active_snapshot:
+            matched = False
+            for item in items:
+                if (
+                    item.get("charge_point_id") == active_snapshot.get("charge_point_id")
+                    or item.get("active")
+                ):
+                    item.update({key: value for key, value in active_snapshot.items() if value is not None})
+                    matched = True
+                    break
+            if not matched:
+                items.append(active_snapshot)
+        return sorted(
+            items,
+            key=lambda value: str(value.get("last_seen") or ""),
+            reverse=True,
+        )
+
+    def _active_state_charge_point(self) -> dict[str, Any] | None:
+        if not self.data.connected or not self.data.charge_point_id:
+            return None
+        last_seen = self.data.last_seen.isoformat() if isinstance(self.data.last_seen, datetime) else self.data.last_seen
+        return {
+            "session_id": "active-state",
+            "charge_point_id": self.data.charge_point_id,
+            "manufacturer": self.data.manufacturer,
+            "model": self.data.model,
+            "firmware": self.data.firmware_version,
+            "serial": self.data.charge_point_serial_number or self.data.charge_box_serial_number,
+            "charge_point_serial_number": self.data.charge_point_serial_number,
+            "charge_box_serial_number": self.data.charge_box_serial_number,
+            "local_ip_address": self.data.local_ip_address,
+            "remote_address": self.data.websocket_remote_address,
+            "connection_state": self.data.connection_state,
+            "status": self.data.status,
+            "error_code": self.data.error_code,
+            "vendor_error_code": self.data.vendor_error_code,
+            "active": True,
+            "last_seen": last_seen,
+        }
+
+    async def async_select_active_charge_point(self, charge_point_id: str | None) -> None:
+        """Select which connected charge point backs the single dashboard state."""
+        selected: dict[str, Any] | None = None
+        for item in self._connected_charge_points.values():
+            is_selected = bool(charge_point_id and item.get("charge_point_id") == charge_point_id)
+            item["active"] = is_selected
+            if is_selected:
+                selected = item
+
+        self.data.charge_point_id = charge_point_id
+        self.data.live_power_kw = None
+        self.data.live_current_a = None
+        self.data.live_voltage_v = None
+        self.data.cp_voltage_v = None
+        self.data.cp_duty_cycle_percent = None
+        self.data.transaction_id = None
+        self.data.transaction_active = False
+        self.data.transaction_id_tag = None
+        self.data.transaction_meter_start_wh = None
+        self.data.transaction_started_at = None
+        self.data.transaction_ended_at = None
+        self.data.session_energy_kwh = None
+
+        if selected is None:
+            self.data.connected = False
+            self.data.connection_state = "disconnected"
+            self.data.manufacturer = None
+            self.data.model = None
+            self.data.firmware_version = None
+            self.data.charge_point_serial_number = None
+            self.data.charge_box_serial_number = None
+            self.data.websocket_remote_address = None
+            self.data.local_ip_address = None
+            self.data.status = None
+            self.data.error_code = None
+            self.data.vendor_error_code = None
+            self.data.car_plugged_in = None
+            self.data.last_seen = datetime.now(UTC)
+            self._notify(persist=True)
+            return
+
+        snapshot = self.charger_snapshot_for(charge_point_id)
+        if snapshot:
+            _apply_snapshot_to_state(self.data, snapshot)
+
+        self.data.connected = True
+        self.data.connection_state = str(selected.get("connection_state") or "connected")
+        self.data.manufacturer = selected.get("manufacturer")
+        self.data.model = selected.get("model")
+        self.data.firmware_version = selected.get("firmware")
+        self.data.charge_point_serial_number = selected.get("charge_point_serial_number") or selected.get("serial")
+        self.data.charge_box_serial_number = selected.get("charge_box_serial_number")
+        self.data.websocket_remote_address = selected.get("remote_address")
+        self.data.local_ip_address = selected.get("local_ip_address") or selected.get("remote_address")
+        self.data.status = selected.get("status")
+        self.data.error_code = selected.get("error_code")
+        self.data.vendor_error_code = selected.get("vendor_error_code")
+        self.data.car_plugged_in = _is_car_plugged_in_status(self.data.status)
+        self.data.transaction_active = _is_charging_status(self.data.status)
+        self.data.last_seen = _parse_ocpp_ts(selected.get("last_seen")) or datetime.now(UTC)
+        _LOGGER.info("Selected active charger: %s", charge_point_id)
+        self._notify(persist=True)
 
     async def async_note_rejected_charge_point(self, candidate_id: str | None) -> None:
         _LOGGER.warning("Rejected charger connection: %s", candidate_id)
 
     async def async_connection_opened(
         self,
+        session_id: str,
         charge_point_id: str | None,
         local_host: str | None,
         remote_host: str | None,
+        firmware_server_host: str | None = None,
     ) -> None:
+        now = datetime.now(UTC)
         self.data.connected = True
         self.data.connection_state = "connected"
         self.data.charge_point_id = charge_point_id
-        if local_host and local_host not in {"0.0.0.0", "::"}:
-            self.data.firmware_server_host = local_host
+        advertised_firmware_host = self.resolve_firmware_server_host(firmware_server_host, local_host)
+        if advertised_firmware_host:
+            self.data.firmware_server_host = advertised_firmware_host
         self.data.websocket_remote_address = remote_host or None
         self.data.local_ip_address = remote_host or None
-        self.data.last_seen = datetime.now(UTC)
+        self.data.last_seen = now
+        self._record_connected_charge_point(
+            session_id,
+            charge_point_id,
+            local_host=local_host,
+            remote_host=remote_host,
+            firmware_server_host=advertised_firmware_host,
+            active=True,
+            last_seen=now,
+        )
         _LOGGER.info("Charger connected: %s from %s", charge_point_id, remote_host)
+        self._save_connected_charge_point_snapshot(session_id)
         self._notify()
 
-    async def async_connection_closed(self) -> None:
+    async def async_unmanaged_connection_opened(
+        self,
+        session_id: str,
+        charge_point_id: str | None,
+        local_host: str | None,
+        remote_host: str | None,
+        firmware_server_host: str | None = None,
+    ) -> None:
+        now = datetime.now(UTC)
+        self._record_connected_charge_point(
+            session_id,
+            charge_point_id,
+            local_host=local_host,
+            remote_host=remote_host,
+            firmware_server_host=self.resolve_firmware_server_host(firmware_server_host, local_host),
+            active=False,
+            last_seen=now,
+        )
+        _LOGGER.info("Unadopted charger connected: %s from %s", charge_point_id, remote_host)
+        self._save_connected_charge_point_snapshot(session_id)
+
+    async def async_passive_connection_opened(
+        self,
+        session_id: str,
+        charge_point_id: str | None,
+        local_host: str | None,
+        remote_host: str | None,
+        firmware_server_host: str | None = None,
+    ) -> None:
+        now = datetime.now(UTC)
+        self._record_connected_charge_point(
+            session_id,
+            charge_point_id,
+            local_host=local_host,
+            remote_host=remote_host,
+            firmware_server_host=self.resolve_firmware_server_host(firmware_server_host, local_host),
+            active=False,
+            last_seen=now,
+        )
+        _LOGGER.info("Adopted passive charger connected: %s from %s", charge_point_id, remote_host)
+        self._save_connected_charge_point_snapshot(session_id)
+
+    async def async_connection_closed(self, session_id: str | None = None) -> None:
+        removed = self._connected_charge_points.get(session_id) if session_id else None
+        if session_id:
+            self._connected_charge_points.pop(session_id, None)
         self.data.connected = False
         self.data.connection_state = "disconnected"
         self.data.live_power_kw = None
@@ -186,13 +503,97 @@ class OcppCoordinator:
         self.data.live_voltage_v = None
         self.data.last_seen = datetime.now(UTC)
         _LOGGER.info("Charger disconnected")
+        self._mark_firmware_installing_after_disconnect(self.data)
         self._notify(persist=True)
+        if removed and removed.get("charge_point_id"):
+            snapshot = self.charger_snapshot_for(removed.get("charge_point_id")) or {}
+            snapshot_state = _state_from_snapshot(snapshot)
+            self._mark_firmware_installing_after_disconnect(snapshot_state)
+            snapshot.update(_state_to_dict(snapshot_state))
+            snapshot.update(
+                {
+                    "connected": False,
+                    "connection_state": "disconnected",
+                    "last_seen": self.data.last_seen.isoformat(),
+                }
+            )
+            self._save_charger_snapshot(str(removed["charge_point_id"]), snapshot)
+
+    async def async_unmanaged_connection_closed(self, session_id: str) -> None:
+        removed = self._connected_charge_points.pop(session_id, None)
+        if removed:
+            _LOGGER.info("Unadopted charger disconnected: %s", removed.get("charge_point_id"))
+            if removed.get("charge_point_id"):
+                snapshot = self.charger_snapshot_for(removed.get("charge_point_id")) or {}
+                snapshot.update(
+                    {
+                        "connected": False,
+                        "connection_state": "disconnected",
+                        "last_seen": datetime.now(UTC).isoformat(),
+                    }
+                )
+                self._save_charger_snapshot(str(removed["charge_point_id"]), snapshot)
+
+    async def async_passive_connection_closed(self, session_id: str) -> None:
+        removed = self._connected_charge_points.pop(session_id, None)
+        if removed:
+            _LOGGER.info("Adopted passive charger disconnected: %s", removed.get("charge_point_id"))
+            if removed.get("charge_point_id"):
+                snapshot = self.charger_snapshot_for(removed.get("charge_point_id")) or {}
+                snapshot.update(
+                    {
+                        "connected": False,
+                        "connection_state": "disconnected",
+                        "last_seen": datetime.now(UTC).isoformat(),
+                    }
+                )
+                self._save_charger_snapshot(str(removed["charge_point_id"]), snapshot)
 
     # ── OCPP message handlers ────────────────────────────────────────────
 
     async def async_record_boot(
         self, charge_point_id: str | None, payload: dict[str, Any]
     ) -> None:
+        if not self._is_selected_charge_point(charge_point_id):
+            session_id = self._connected_session_key_for_charge_point(charge_point_id)
+            if session_id:
+                self._update_connected_charge_point_boot(session_id, charge_point_id, payload, active=False)
+                self._save_connected_charge_point_snapshot(session_id)
+                snapshot = self.charger_snapshot_for(charge_point_id) or {}
+                snapshot_state = _state_from_snapshot(snapshot)
+                snapshot_state.firmware_version = payload.get("firmwareVersion")
+                snapshot_state.charge_point_id = charge_point_id or snapshot_state.charge_point_id
+                snapshot_state.manufacturer = payload.get("chargePointVendor")
+                snapshot_state.model = payload.get("chargePointModel")
+                snapshot_state.charge_point_serial_number = payload.get("chargePointSerialNumber")
+                snapshot_state.charge_box_serial_number = payload.get("chargeBoxSerialNumber")
+                snapshot_state.last_boot_notification = payload
+                snapshot_state.last_seen = datetime.now(UTC)
+                self._mark_firmware_result_from_observed_version(snapshot_state)
+                self._save_charger_snapshot(str(charge_point_id or ""), _state_to_dict(snapshot_state))
+            else:
+                snapshot = self.charger_snapshot_for(charge_point_id) or {}
+                snapshot_state = _state_from_snapshot(snapshot)
+                snapshot_state.charge_point_id = charge_point_id
+                snapshot_state.manufacturer = payload.get("chargePointVendor")
+                snapshot_state.model = payload.get("chargePointModel")
+                snapshot_state.firmware_version = payload.get("firmwareVersion")
+                snapshot_state.charge_point_serial_number = payload.get("chargePointSerialNumber")
+                snapshot_state.charge_box_serial_number = payload.get("chargeBoxSerialNumber")
+                snapshot_state.last_boot_notification = payload
+                snapshot_state.last_seen = datetime.now(UTC)
+                self._mark_firmware_result_from_observed_version(snapshot_state)
+                self._patch_charger_snapshot(
+                    charge_point_id,
+                    _state_to_dict(snapshot_state),
+                )
+            _LOGGER.info(
+                "BootNotification from non-active charger %s %s fw=%s",
+                payload.get("chargePointVendor"),
+                payload.get("chargePointModel"),
+                payload.get("firmwareVersion"),
+            )
+            return
         self.data.charge_point_id = charge_point_id or self.data.charge_point_id
         self.data.manufacturer = payload.get("chargePointVendor")
         self.data.model = payload.get("chargePointModel")
@@ -201,20 +602,207 @@ class OcppCoordinator:
         self.data.charge_box_serial_number = payload.get("chargeBoxSerialNumber")
         self.data.last_boot_notification = payload
         self.data.last_seen = datetime.now(UTC)
+        self._mark_firmware_result_from_observed_version(self.data)
+        self._update_connected_charge_point_boot(None, self.data.charge_point_id, payload, active=True)
         _LOGGER.info("BootNotification from %s %s fw=%s", self.data.manufacturer, self.data.model, self.data.firmware_version)
         self._notify(persist=True)
         # Schedule GetConfiguration after a short delay so the charger has finished
         # processing the BootNotification response before we send outbound calls.
+        refresh_charge_point_id = self.data.charge_point_id
         asyncio.get_running_loop().call_later(
-            2.0, lambda: asyncio.ensure_future(self._safe_refresh_configuration())
+            2.0,
+            lambda: asyncio.ensure_future(
+                self._safe_refresh_configuration(refresh_charge_point_id)
+            ),
         )
 
-    async def async_record_heartbeat(self) -> None:
+    async def async_record_unmanaged_boot(
+        self, session_id: str, charge_point_id: str | None, payload: dict[str, Any]
+    ) -> None:
+        self._update_connected_charge_point_boot(session_id, charge_point_id, payload, active=False)
+        self._save_connected_charge_point_snapshot(session_id)
+        _LOGGER.info(
+            "BootNotification from unadopted charger %s %s fw=%s",
+            payload.get("chargePointVendor"),
+            payload.get("chargePointModel"),
+            payload.get("firmwareVersion"),
+        )
+
+    async def async_record_unmanaged_heartbeat(self, session_id: str) -> None:
+        self._touch_connected_charge_point(session_id)
+        self._save_connected_charge_point_snapshot(session_id)
+
+    async def async_record_unmanaged_status(self, session_id: str, payload: dict[str, Any]) -> None:
+        self._touch_connected_charge_point(
+            session_id,
+            status=payload.get("status"),
+            error_code=payload.get("errorCode"),
+            vendor_error_code=payload.get("vendorErrorCode"),
+        )
+        self._save_connected_charge_point_snapshot(session_id)
+
+    def _record_connected_charge_point(
+        self,
+        session_id: str,
+        charge_point_id: str | None,
+        *,
+        local_host: str | None,
+        remote_host: str | None,
+        firmware_server_host: str | None,
+        active: bool,
+        last_seen: datetime,
+    ) -> None:
+        existing = self._connected_charge_points.get(session_id, {})
+        self._connected_charge_points[session_id] = {
+            **existing,
+            "session_id": session_id,
+            "charge_point_id": charge_point_id,
+            "local_ip_address": local_host,
+            "firmware_server_host": firmware_server_host,
+            "remote_address": remote_host,
+            "connection_state": "connected",
+            "active": active,
+            "last_seen": last_seen.isoformat(),
+        }
+
+    def resolve_firmware_server_host(
+        self,
+        request_host: str | None = None,
+        local_host: str | None = None,
+    ) -> str | None:
+        for candidate in (self.firmware_public_host, request_host, local_host):
+            host = str(candidate or "").strip()
+            if host and host not in {"0.0.0.0", "::"}:
+                return host
+        return None
+
+    def _update_connected_charge_point_boot(
+        self,
+        session_id: str | None,
+        charge_point_id: str | None,
+        payload: dict[str, Any],
+        *,
+        active: bool,
+    ) -> None:
+        key = session_id or self._connected_session_key(charge_point_id, active=active)
+        if not key:
+            return
+        existing = self._connected_charge_points.get(key, {})
+        self._connected_charge_points[key] = {
+            **existing,
+            "session_id": key,
+            "charge_point_id": charge_point_id or existing.get("charge_point_id"),
+            "manufacturer": payload.get("chargePointVendor"),
+            "model": payload.get("chargePointModel"),
+            "firmware": payload.get("firmwareVersion"),
+            "serial": payload.get("chargePointSerialNumber") or payload.get("chargeBoxSerialNumber"),
+            "charge_point_serial_number": payload.get("chargePointSerialNumber"),
+            "charge_box_serial_number": payload.get("chargeBoxSerialNumber"),
+            "active": active,
+            "last_seen": datetime.now(UTC).isoformat(),
+        }
+
+    def _touch_connected_charge_point(self, session_id: str, **updates: Any) -> None:
+        existing = self._connected_charge_points.get(session_id)
+        if not existing:
+            return
+        existing.update(updates)
+        existing["last_seen"] = datetime.now(UTC).isoformat()
+
+    def _connected_session_key(self, charge_point_id: str | None, *, active: bool) -> str | None:
+        for session_id, item in self._connected_charge_points.items():
+            if item.get("active") == active and item.get("charge_point_id") == charge_point_id:
+                return session_id
+        return None
+
+    def _connected_session_key_for_charge_point(self, charge_point_id: str | None) -> str | None:
+        for session_id, item in self._connected_charge_points.items():
+            if item.get("charge_point_id") == charge_point_id:
+                return session_id
+        return None
+
+    def mark_connected_charge_point_adopted(self, charge_point_id: str | None, *, active: bool = False) -> None:
+        session_id = self._connected_session_key_for_charge_point(charge_point_id)
+        if not session_id:
+            return
+        self._touch_connected_charge_point(
+            session_id,
+            active=active,
+            connection_state="connected",
+        )
+        self._save_connected_charge_point_snapshot(session_id)
+        self._push_sse()
+
+    def _is_selected_charge_point(self, charge_point_id: str | None) -> bool:
+        if not charge_point_id:
+            return True
+        return str(charge_point_id) == str(self.data.charge_point_id or "")
+
+    def _patch_charger_snapshot(self, charge_point_id: str | None, updates: dict[str, Any]) -> None:
+        charge_point_id = str(charge_point_id or "").strip()
+        if not charge_point_id:
+            return
+        snapshot = self.charger_snapshot_for(charge_point_id) or {"charge_point_id": charge_point_id}
+        snapshot.update(updates)
+        self._save_charger_snapshot(charge_point_id, snapshot)
+        self._push_sse()
+
+    async def async_record_heartbeat(self, charge_point_id: str | None = None) -> None:
+        if not self._is_selected_charge_point(charge_point_id):
+            session_id = self._connected_session_key_for_charge_point(charge_point_id)
+            if session_id:
+                self._touch_connected_charge_point(session_id)
+                self._save_connected_charge_point_snapshot(session_id)
+            else:
+                now = datetime.now(UTC).isoformat()
+                self._patch_charger_snapshot(charge_point_id, {"last_heartbeat": now, "last_seen": now})
+            return
         self.data.last_heartbeat = datetime.now(UTC)
         self.data.last_seen = datetime.now(UTC)
+        self._save_active_charger_snapshot()
         self._notify()
 
-    async def async_record_status(self, payload: dict[str, Any]) -> None:
+    async def async_record_status(self, charge_point_id: str | None, payload: dict[str, Any]) -> None:
+        if not self._is_selected_charge_point(charge_point_id):
+            previous_snapshot = self.charger_snapshot_for(charge_point_id) or {}
+            previous_plugged_in = previous_snapshot.get("car_plugged_in")
+            next_status = payload.get("status")
+            next_plugged_in = _is_car_plugged_in_status(next_status)
+            session_id = self._connected_session_key_for_charge_point(charge_point_id)
+            updates = {
+                "status": next_status,
+                "error_code": payload.get("errorCode"),
+                "vendor_error_code": payload.get("vendorErrorCode"),
+            }
+            if session_id:
+                self._touch_connected_charge_point(session_id, **updates)
+                self._save_connected_charge_point_snapshot(session_id)
+            self._patch_charger_snapshot(
+                charge_point_id,
+                {
+                    **updates,
+                    "car_plugged_in": next_plugged_in,
+                    "transaction_active": _is_charging_status(next_status),
+                    "last_status_notification": payload,
+                    "last_seen": datetime.now(UTC).isoformat(),
+                },
+            )
+            if (
+                previous_snapshot.get("plug_and_go_enabled")
+                and previous_plugged_in is False
+                and next_plugged_in is True
+                and not _is_charging_status(next_status)
+                and not previous_snapshot.get("plug_and_go_start_pending")
+            ):
+                self._patch_charger_snapshot(
+                    charge_point_id,
+                    {
+                        "plug_and_go_start_pending": True,
+                        "plug_and_go_last_error": None,
+                    },
+                )
+                asyncio.create_task(self._async_handle_plug_and_go_start(charge_point_id))
+            return
         previous_plugged_in = self.data.car_plugged_in
         self.data.status = payload.get("status")
         self.data.error_code = payload.get("errorCode")
@@ -223,7 +811,16 @@ class OcppCoordinator:
         self.data.last_seen = datetime.now(UTC)
         self.data.car_plugged_in = _is_car_plugged_in_status(self.data.status)
         self.data.transaction_active = _is_charging_status(self.data.status)
+        active_session_id = self._connected_session_key(self.data.charge_point_id, active=True)
+        if active_session_id:
+            self._touch_connected_charge_point(
+                active_session_id,
+                status=self.data.status,
+                error_code=self.data.error_code,
+                vendor_error_code=self.data.vendor_error_code,
+            )
         _LOGGER.debug("StatusNotification: %s / %s", self.data.status, self.data.error_code)
+        self._save_active_charger_snapshot()
         self._notify()
 
         if (
@@ -236,10 +833,35 @@ class OcppCoordinator:
             self.data.plug_and_go_start_pending = True
             self.data.plug_and_go_last_error = None
             self._notify()
-            asyncio.create_task(self._async_handle_plug_and_go_start())
+            asyncio.create_task(self._async_handle_plug_and_go_start(self.data.charge_point_id))
 
-    async def async_start_transaction_from_charger(self, payload: dict[str, Any]) -> int:
+    async def async_start_transaction_from_charger(
+        self, charge_point_id: str | None, payload: dict[str, Any]
+    ) -> int:
         tx_id = next(_tx_counter)
+        if not self._is_selected_charge_point(charge_point_id):
+            timestamp = _parse_ocpp_ts(payload.get("timestamp")) or datetime.now(UTC)
+            self._patch_charger_snapshot(
+                charge_point_id,
+                {
+                    "transaction_id": tx_id,
+                    "transaction_active": True,
+                    "transaction_open": True,
+                    "plug_and_go_start_pending": False,
+                    "plug_and_go_last_error": None,
+                    "transaction_id_tag": payload.get("idTag"),
+                    "transaction_meter_start_wh": _safe_float(payload.get("meterStart")),
+                    "transaction_started_at": timestamp.isoformat(),
+                    "transaction_ended_at": None,
+                    "session_energy_kwh": None,
+                    "last_seen": datetime.now(UTC).isoformat(),
+                },
+            )
+            _LOGGER.info("Transaction started id=%s tag=%s charger=%s", tx_id, payload.get("idTag"), charge_point_id)
+            recorder = getattr(self._state_store, "record_session_start", None)
+            if recorder and charge_point_id:
+                recorder(charge_point_id, payload.get("idTag"), _safe_float(payload.get("meterStart")), timestamp.isoformat())
+            return tx_id
         self.data.transaction_id = tx_id
         self.data.transaction_active = _is_charging_status(self.data.status)
         self.data.plug_and_go_start_pending = False
@@ -252,9 +874,43 @@ class OcppCoordinator:
         self.data.last_seen = datetime.now(UTC)
         _LOGGER.info("Transaction started id=%s tag=%s", tx_id, self.data.transaction_id_tag)
         self._notify(persist=True)
+        recorder = getattr(self._state_store, "record_session_start", None)
+        if recorder and charge_point_id:
+            started_at = (self.data.transaction_started_at or datetime.now(UTC)).isoformat()
+            recorder(charge_point_id, self.data.transaction_id_tag, self.data.transaction_meter_start_wh, started_at)
         return tx_id
 
-    async def async_stop_transaction_from_charger(self, payload: dict[str, Any]) -> None:
+    async def async_stop_transaction_from_charger(
+        self, charge_point_id: str | None, payload: dict[str, Any]
+    ) -> None:
+        if not self._is_selected_charge_point(charge_point_id):
+            snapshot = self.charger_snapshot_for(charge_point_id) or {}
+            meter_stop = _safe_float(payload.get("meterStop"))
+            session_energy_kwh = snapshot.get("session_energy_kwh")
+            meter_start = _safe_float(snapshot.get("transaction_meter_start_wh"))
+            total_energy_kwh = snapshot.get("total_energy_kwh")
+            if meter_stop is not None:
+                total_energy_kwh = round(meter_stop / 1000, 2)
+                if meter_start is not None:
+                    session_energy_kwh = round((meter_stop - meter_start) / 1000, 3)
+            timestamp = _parse_ocpp_ts(payload.get("timestamp")) or datetime.now(UTC)
+            self._patch_charger_snapshot(
+                charge_point_id,
+                {
+                    "transaction_active": False,
+                    "transaction_id": payload.get("transactionId", snapshot.get("transaction_id")),
+                    "plug_and_go_start_pending": False,
+                    "transaction_ended_at": timestamp.isoformat(),
+                    "session_energy_kwh": session_energy_kwh,
+                    "total_energy_kwh": total_energy_kwh,
+                    "last_seen": datetime.now(UTC).isoformat(),
+                },
+            )
+            _LOGGER.info("Transaction stopped charger=%s energy=%s kWh", charge_point_id, session_energy_kwh)
+            recorder = getattr(self._state_store, "record_session_stop", None)
+            if recorder and charge_point_id:
+                recorder(charge_point_id, payload.get("idTag"), meter_stop, timestamp.isoformat(), payload.get("reason"))
+            return
         meter_stop = _safe_float(payload.get("meterStop"))
         if meter_stop is not None and self.data.transaction_meter_start_wh is not None:
             self.data.session_energy_kwh = round(
@@ -268,37 +924,64 @@ class OcppCoordinator:
         self.data.last_seen = datetime.now(UTC)
         _LOGGER.info("Transaction stopped energy=%.3f kWh", self.data.session_energy_kwh or 0)
         self._notify(persist=True)
+        recorder = getattr(self._state_store, "record_session_stop", None)
+        if recorder and charge_point_id:
+            stopped_at = self.data.transaction_ended_at.isoformat()
+            recorder(charge_point_id, payload.get("idTag"), meter_stop, stopped_at, payload.get("reason"))
 
-    async def async_record_meter_values(self, payload: dict[str, Any]) -> None:
+    async def async_record_meter_values(self, charge_point_id: str | None, payload: dict[str, Any]) -> None:
+        flattened = self._flatten_meter_values_payload(payload)
+        recorder = getattr(self._state_store, "record_meter_values", None)
+        if recorder and charge_point_id:
+            recorder(charge_point_id, flattened)
+        if not self._is_selected_charge_point(charge_point_id):
+            state = self.state_for_charge_point(charge_point_id)
+            state.last_meter_values = payload
+            state.last_seen = datetime.now(UTC)
+            self._restore_transaction_from_meter_values(payload, state=state)
+            self._apply_meter_values_payload(payload, state=state, flattened=flattened)
+            self._persist_charge_point_state(
+                charge_point_id,
+                state,
+                persist=True,
+            )
+            return
         previous_total_kwh = self.data.total_energy_kwh
         self.data.last_meter_values = payload
         self.data.last_seen = datetime.now(UTC)
-        self._restore_transaction_from_meter_values(payload)
-        self._apply_meter_values_payload(payload)
+        self._restore_transaction_from_meter_values(payload, state=self.data)
+        self._apply_meter_values_payload(payload, state=self.data, flattened=flattened)
+        self._save_active_charger_snapshot()
         self._notify(persist=self.data.total_energy_kwh != previous_total_kwh)
 
-    def _restore_transaction_from_meter_values(self, payload: dict[str, Any]) -> None:
+    def _restore_transaction_from_meter_values(
+        self, payload: dict[str, Any], *, state: ChargerState | None = None
+    ) -> None:
         """Recover an open transaction id from MeterValues after reconnects."""
+        state = state or self.data
         transaction_id = _coerce_int(payload.get("transactionId"))
         if transaction_id is None:
             return
 
-        if self.data.transaction_id != transaction_id:
-            self.data.transaction_id = transaction_id
-        self.data.transaction_ended_at = None
-        if self.data.transaction_started_at is None:
+        if state.transaction_id != transaction_id:
+            state.transaction_id = transaction_id
+        state.transaction_ended_at = None
+        if state.transaction_started_at is None:
             meter_values = payload.get("meterValue") or []
             timestamp = None
             if meter_values:
                 timestamp = _parse_ocpp_ts(meter_values[0].get("timestamp"))
-            self.data.transaction_started_at = timestamp or datetime.now(UTC)
-        self.data.transaction_active = _is_charging_status(self.data.status)
+            state.transaction_started_at = timestamp or datetime.now(UTC)
+        state.transaction_active = _is_charging_status(state.status)
 
-    def _apply_meter_values_payload(self, payload: dict[str, Any]) -> None:
+    def _apply_meter_values_payload(
+        self, payload: dict[str, Any], *, state: ChargerState | None = None, flattened: list[dict] | None = None
+    ) -> None:
         """Parse MeterValues using the same sample selection model as upstream."""
-        flattened_samples = self._flatten_meter_values_payload(payload)
-        self.data.meter_samples = flattened_samples
-        self.data.parsed_meter_values = {
+        state = state or self.data
+        flattened_samples = flattened if flattened is not None else self._flatten_meter_values_payload(payload)
+        state.meter_samples = flattened_samples
+        state.parsed_meter_values = {
             sample["sample_key"]: {
                 "timestamp": sample["timestamp"],
                 "raw_value": sample["raw_value"],
@@ -315,9 +998,9 @@ class OcppCoordinator:
 
         meter_groups = self._group_meter_samples(flattened_samples)
         ev_meter_group = self._pick_givenergy_ev_meter_group(meter_groups)
-        preferred_group = ev_meter_group or self._pick_preferred_meter_group(meter_groups)
+        preferred_group = ev_meter_group or self._pick_preferred_meter_group(meter_groups, state=state)
         live_samples = preferred_group or flattened_samples
-        power_delivery_expected = self._status_expects_power_delivery()
+        power_delivery_expected = self._status_expects_power_delivery(state=state)
 
         power_sample = self._pick_preferred_sample(
             live_samples,
@@ -329,7 +1012,7 @@ class OcppCoordinator:
             prefer_non_negative=not power_delivery_expected,
         )
         if power_sample and power_sample["normalized_value"] is not None:
-            self.data.live_power_kw = round(power_sample["normalized_value"] / 1000, 2)
+            state.live_power_kw = round(power_sample["normalized_value"] / 1000, 2)
 
         current_sample = self._pick_preferred_sample(
             live_samples,
@@ -341,7 +1024,7 @@ class OcppCoordinator:
             prefer_non_negative=not power_delivery_expected,
         )
         if current_sample and current_sample["normalized_value"] is not None:
-            self.data.live_current_a = round(current_sample["normalized_value"], 3)
+            state.live_current_a = round(current_sample["normalized_value"], 3)
 
         voltage_sample = self._pick_preferred_sample(
             live_samples,
@@ -352,18 +1035,18 @@ class OcppCoordinator:
             prefer_non_negative=True,
         )
         if voltage_sample and voltage_sample["normalized_value"] is not None:
-            self.data.live_voltage_v = round(voltage_sample["normalized_value"], 1)
+            state.live_voltage_v = round(voltage_sample["normalized_value"], 1)
 
         for sample in flattened_samples:
             context = sample.get("context") or ""
             m = CP_READING_PATTERN.search(str(context))
             if m:
-                self.data.cp_voltage_v = float(m.group("voltage"))
-                self.data.cp_duty_cycle_percent = float(m.group("duty"))
+                state.cp_voltage_v = float(m.group("voltage"))
+                state.cp_duty_cycle_percent = float(m.group("duty"))
 
         previous_total_wh = (
-            self.data.total_energy_kwh * 1000
-            if self.data.total_energy_kwh is not None
+            state.total_energy_kwh * 1000
+            if state.total_energy_kwh is not None
             else None
         )
         total_energy_samples = ev_meter_group or preferred_group or flattened_samples
@@ -372,20 +1055,20 @@ class OcppCoordinator:
         )
         if total_energy_sample and total_energy_sample["normalized_value"] is not None:
             total_wh = total_energy_sample["normalized_value"]
-            self.data.total_energy_kwh = round(total_wh / 1000, 2)
+            state.total_energy_kwh = round(total_wh / 1000, 2)
             if (
-                self.data.transaction_active
-                and self.data.transaction_meter_start_wh is None
+                state.transaction_active
+                and state.transaction_meter_start_wh is None
                 and total_wh > 0
             ):
-                self.data.transaction_meter_start_wh = total_wh
-                self.data.session_energy_kwh = 0.0
+                state.transaction_meter_start_wh = total_wh
+                state.session_energy_kwh = 0.0
             elif (
-                self.data.transaction_meter_start_wh is not None
-                and total_wh >= self.data.transaction_meter_start_wh
+                state.transaction_meter_start_wh is not None
+                and total_wh >= state.transaction_meter_start_wh
             ):
-                self.data.session_energy_kwh = round(
-                    (total_wh - self.data.transaction_meter_start_wh) / 1000, 3
+                state.session_energy_kwh = round(
+                    (total_wh - state.transaction_meter_start_wh) / 1000, 3
                 )
 
     def _flatten_meter_values_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -506,12 +1189,13 @@ class OcppCoordinator:
         return None
 
     def _pick_preferred_meter_group(
-        self, groups: dict[int, list[dict[str, Any]]]
+        self, groups: dict[int, list[dict[str, Any]]], *, state: ChargerState | None = None
     ) -> list[dict[str, Any]] | None:
+        state = state or self.data
         if not groups:
             return None
 
-        power_delivery_expected = self._status_expects_power_delivery()
+        power_delivery_expected = self._status_expects_power_delivery(state=state)
 
         def group_summary(
             samples: list[dict[str, Any]],
@@ -549,9 +1233,9 @@ class OcppCoordinator:
         ) -> tuple[int, int, int, int, int, float, float] | tuple[int, int, int, float, float]:
             _group_index, samples = item
             power, current, voltage, energy = group_summary(samples)
-            within_current_limit = int(self._sample_within_current_limit(current))
+            within_current_limit = int(self._sample_within_current_limit(current, state=state))
             within_power_limit = int(
-                self._sample_within_power_limit(power, current, voltage)
+                self._sample_within_power_limit(power, current, voltage, state=state)
             )
             has_valid_voltage = int(voltage is not None and voltage > 100)
             non_negative_power = int(power is not None and power >= 0)
@@ -590,15 +1274,19 @@ class OcppCoordinator:
 
         return max(groups.items(), key=score)[1]
 
-    def _status_expects_power_delivery(self) -> bool:
-        if self.data.status is None:
-            return self.data.transaction_active
-        return self.data.status == "Charging"
+    def _status_expects_power_delivery(self, *, state: ChargerState | None = None) -> bool:
+        state = state or self.data
+        if state.status is None:
+            return state.transaction_active
+        return state.status == "Charging"
 
-    def _sample_within_current_limit(self, current: float | None) -> bool:
+    def _sample_within_current_limit(
+        self, current: float | None, *, state: ChargerState | None = None
+    ) -> bool:
         if current is None:
             return False
-        limit = self.data.current_limit_a or DEFAULT_EVSE_MAX_CURRENT
+        state = state or self.data
+        limit = state.current_limit_a or DEFAULT_EVSE_MAX_CURRENT
         return current <= (limit * 1.1)
 
     def _sample_within_power_limit(
@@ -606,10 +1294,13 @@ class OcppCoordinator:
         power_w: float | None,
         current_a: float | None,
         voltage_v: float | None,
+        *,
+        state: ChargerState | None = None,
     ) -> bool:
         if power_w is None:
             return False
-        limit = self.data.current_limit_a or DEFAULT_EVSE_MAX_CURRENT
+        state = state or self.data
+        limit = state.current_limit_a or DEFAULT_EVSE_MAX_CURRENT
         reference_voltage = voltage_v if voltage_v and voltage_v > 100 else 240.0
         max_power_w = limit * reference_voltage * 1.1
         if power_w <= max_power_w:
@@ -649,25 +1340,26 @@ class OcppCoordinator:
 
     # ── Configuration refresh ────────────────────────────────────────────
 
-    async def _safe_refresh_configuration(self) -> None:
+    async def _safe_refresh_configuration(self, charge_point_id: str | None = None) -> None:
         try:
-            await self.async_refresh_configuration()
+            await self.async_refresh_configuration(charge_point_id=charge_point_id)
         except Exception:
-            _LOGGER.exception("GetConfiguration failed")
+            _LOGGER.exception("GetConfiguration failed for charger %s", charge_point_id)
 
-    async def _safe_reset(self) -> None:
+    async def _safe_reset(self, charge_point_id: str | None = None) -> None:
         try:
-            caller = getattr(self, "_ocpp_caller", None)
-            if caller is None:
+            target = charge_point_id or self.data.charge_point_id
+            if not self.charge_point_can_receive_commands(target):
                 return
-            result = await caller.async_call("Reset", {"type": "Hard"}, timeout=5)
+            result = await self._ocpp_call("Reset", {"type": "Hard"}, timeout=5, charge_point_id=target)
             _LOGGER.info("Reset response: %s", result)
         except RuntimeError:
             _LOGGER.info("Reset sent — no response before disconnect (normal)")
 
-    async def async_refresh_configuration(self) -> dict[str, Any]:
+    async def async_refresh_configuration(self, charge_point_id: str | None = None) -> dict[str, Any]:
         """Send GetConfiguration to the charger and update local state from the response."""
-        result = await self._ocpp_call("GetConfiguration", {}, timeout=60)
+        result = await self._ocpp_call("GetConfiguration", {}, timeout=60, charge_point_id=charge_point_id)
+        state = self.state_for_charge_point(charge_point_id)
         config: dict[str, dict[str, Any]] = {}
         for item in result.get("configurationKey", []):
             key = item.get("key")
@@ -690,15 +1382,15 @@ class OcppCoordinator:
                 return None
 
         reported_ip = str(_val("LocalIPAddress") or "").strip()
-        self.data.local_ip_address = (
+        state.local_ip_address = (
             reported_ip
             if reported_ip and reported_ip != "0.0.0.0"
-            else self.data.websocket_remote_address
+            else state.websocket_remote_address
         )
 
-        self.data.charge_mode = _val("EcoMode") or self.data.charge_mode
-        self.data.front_panel_leds_enabled = _bool("FrontPanelLEDsEnabled")
-        self.data.local_modbus_enabled     = _bool("EnableLocalModbus")
+        state.charge_mode = _val("EcoMode") or state.charge_mode
+        state.front_panel_leds_enabled = _bool("FrontPanelLEDsEnabled")
+        state.local_modbus_enabled     = _bool("EnableLocalModbus")
 
         # Current limit — ChargeRate takes priority; stored in tenths-of-amps on write
         # but reported back in real amps by GetConfiguration.
@@ -711,156 +1403,181 @@ class OcppCoordinator:
             # Both keys report real amps in GetConfiguration responses
             if EVSE_MIN <= raw <= EVSE_MAX:
                 limit = round(raw, 1)
-                self.data.current_limit_key = key
+                state.current_limit_key = key
                 break
             _LOGGER.debug("Ignoring %s=%s — outside %s–%sA range", key, raw, EVSE_MIN, EVSE_MAX)
         if limit is not None:
-            self.data.current_limit_a = limit
+            state.current_limit_a = limit
 
         imax = _float("Imax")
         if imax is not None:
             try:
-                self.data.max_import_capacity_a = int(imax)
+                state.max_import_capacity_a = int(imax)
             except (TypeError, ValueError):
                 pass
 
         rand_delay = _float("RandomisedDelayDuration")
         if rand_delay is not None:
             try:
-                self.data.randomised_delay_s = int(rand_delay)
+                state.randomised_delay_s = int(rand_delay)
             except (TypeError, ValueError):
                 pass
 
         cp_lower = _float("ChargingStateBCPVoltageLowerLimit")
         if cp_lower is not None:
-            self.data.cp_voltage_lower_limit = round(cp_lower / 10, 1)
+            state.cp_voltage_lower_limit = round(cp_lower / 10, 1)
 
         cp_upper = _float("ChargingStateBCPVoltageHigherLimit")
         if cp_upper is not None:
-            self.data.cp_voltage_upper_limit = round(cp_upper / 10, 1)
+            state.cp_voltage_upper_limit = round(cp_upper / 10, 1)
 
         suspev = _float("SuspevTime")
         if suspev is not None:
             try:
-                self.data.suspend_timeout_s = int(suspev)
+                state.suspend_timeout_s = int(suspev)
             except (TypeError, ValueError):
                 pass
 
         _LOGGER.info(
             "GetConfiguration: mode=%s leds=%s modbus=%s current_limit=%sA (key=%s) imax=%s suspev=%s",
-            self.data.charge_mode,
-            self.data.front_panel_leds_enabled,
-            self.data.local_modbus_enabled,
-            self.data.current_limit_a,
-            self.data.current_limit_key,
-            self.data.max_import_capacity_a,
-            self.data.suspend_timeout_s,
+            state.charge_mode,
+            state.front_panel_leds_enabled,
+            state.local_modbus_enabled,
+            state.current_limit_a,
+            state.current_limit_key,
+            state.max_import_capacity_a,
+            state.suspend_timeout_s,
         )
-        self._notify(persist=True)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
         return result
 
     # ── Outbound OCPP commands ───────────────────────────────────────────
 
-    async def async_change_configuration(self, key: str, value: Any) -> dict[str, Any]:
+    async def async_change_configuration(
+        self, key: str, value: Any, charge_point_id: str | None = None
+    ) -> dict[str, Any]:
         # ChargeRate is written in tenths-of-amps but read back in real amps
         if key == "ChargeRate":
             value = round(float(value) * 10, 1)
-        result = await self._ocpp_call("ChangeConfiguration", {"key": key, "value": str(value)})
+        result = await self._ocpp_call(
+            "ChangeConfiguration",
+            {"key": key, "value": str(value)},
+            charge_point_id=charge_point_id,
+        )
         status = result.get("status", "")
         if status in ("Accepted", "RebootRequired"):
             _LOGGER.info("ChangeConfiguration %s=%s → %s", key, value, status)
-            self._apply_config_key(key, value)
-            self._notify(persist=True)
+            state = self.state_for_charge_point(charge_point_id)
+            self._apply_config_key(key, value, state=state)
+            self._persist_charge_point_state(charge_point_id, state, persist=True)
         if status == "RebootRequired":
             _LOGGER.info("RebootRequired after %s — scheduling Hard Reset", key)
             asyncio.get_running_loop().call_later(
-                0.5, lambda: asyncio.ensure_future(self._safe_reset())
+                0.5, lambda: asyncio.ensure_future(self._safe_reset(charge_point_id))
             )
         return result
 
-    def _apply_config_key(self, key: str, value: Any) -> None:
+    def _apply_config_key(self, key: str, value: Any, *, state: ChargerState | None = None) -> None:
+        state = state or self.data
         sv = str(value)
         if key == "EcoMode":
-            self.data.charge_mode = sv or None
+            state.charge_mode = sv or None
         elif key == "FrontPanelLEDsEnabled":
-            self.data.front_panel_leds_enabled = sv.lower() in ("true", "1")
+            state.front_panel_leds_enabled = sv.lower() in ("true", "1")
         elif key == "EnableLocalModbus":
-            self.data.local_modbus_enabled = sv.lower() in ("true", "1")
+            state.local_modbus_enabled = sv.lower() in ("true", "1")
         elif key == "MaxCurrent":
             try:
-                self.data.current_limit_a = float(sv)
+                state.current_limit_a = float(sv)
             except (TypeError, ValueError):
                 pass
         elif key == "ChargeRate":
             try:
                 # value is tenths-of-amps (already ×10 before sending); convert back
-                self.data.current_limit_a = round(float(sv) / 10, 1)
+                state.current_limit_a = round(float(sv) / 10, 1)
             except (TypeError, ValueError):
                 pass
         elif key == "Imax":
             try:
-                self.data.max_import_capacity_a = int(float(sv))
+                state.max_import_capacity_a = int(float(sv))
             except (TypeError, ValueError):
                 pass
         elif key == "MaxEnergyOnInvalidId":
             try:
-                self.data.max_energy_per_session_kwh = max(0, round(float(sv) / 1000, 3))
+                state.max_energy_per_session_kwh = max(0, round(float(sv) / 1000, 3))
             except (TypeError, ValueError):
                 pass
         elif key == "SuspevTime":
             try:
-                self.data.suspend_timeout_s = int(float(sv))
+                state.suspend_timeout_s = int(float(sv))
             except (TypeError, ValueError):
                 pass
         elif key == "RandomisedDelayDuration":
             try:
-                self.data.randomised_delay_s = int(float(sv))
+                state.randomised_delay_s = int(float(sv))
             except (TypeError, ValueError):
                 pass
         elif key == "ChargingStateBCPVoltageLowerLimit":
             try:
-                self.data.cp_voltage_lower_limit = round(float(sv) / 10, 1)
+                state.cp_voltage_lower_limit = round(float(sv) / 10, 1)
             except (TypeError, ValueError):
                 pass
         elif key == "ChargingStateBCPVoltageHigherLimit":
             try:
-                self.data.cp_voltage_upper_limit = round(float(sv) / 10, 1)
+                state.cp_voltage_upper_limit = round(float(sv) / 10, 1)
             except (TypeError, ValueError):
                 pass
 
     CHARGE_MODES = ("SuperEco", "Eco", "Boost")
 
-    async def async_set_charge_mode(self, mode: str) -> dict[str, Any]:
+    async def async_set_charge_mode(self, mode: str, charge_point_id: str | None = None) -> dict[str, Any]:
         if mode not in self.CHARGE_MODES:
             raise ValueError(f"Unknown charge mode: {mode}")
-        result = await self._ocpp_call("ChangeConfiguration", {"key": "EcoMode", "value": mode})
+        result = await self._ocpp_call(
+            "ChangeConfiguration",
+            {"key": "EcoMode", "value": mode},
+            charge_point_id=charge_point_id,
+        )
         status = result.get("status", "")
         if status in ("Accepted", "RebootRequired"):
-            self.data.charge_mode = mode
-            self._notify(persist=True)
+            state = self.state_for_charge_point(charge_point_id)
+            state.charge_mode = mode
+            self._persist_charge_point_state(charge_point_id, state, persist=True)
         return result
 
-    async def async_set_plug_and_go(self, enabled: bool) -> None:
+    async def async_set_plug_and_go(self, enabled: bool, charge_point_id: str | None = None) -> None:
         """Plug-and-go is local state only — no OCPP call needed."""
-        self.data.plug_and_go_enabled = enabled
+        state = self.state_for_charge_point(charge_point_id)
+        state.plug_and_go_enabled = enabled
         if not enabled:
-            self.data.plug_and_go_start_pending = False
-        self._notify(persist=True)
+            state.plug_and_go_start_pending = False
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
 
-    async def async_set_max_energy_per_session(self, kwh: float) -> None:
+    async def async_set_max_energy_per_session(self, kwh: float, charge_point_id: str | None = None) -> None:
         """Max energy threshold is local UI state, persisted across restarts."""
-        self.data.max_energy_per_session_kwh = max(0, round(float(kwh), 3))
-        self._notify(persist=True)
+        state = self.state_for_charge_point(charge_point_id)
+        state.max_energy_per_session_kwh = max(0, round(float(kwh), 3))
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
 
-    async def async_save_charging_schedule(self, schedule: dict[str, Any]) -> dict[str, Any]:
-        """Create or update a local charging schedule without OCPP side effects."""
-        existing = {str(item.get("id")): item for item in self.data.charging_schedule if item.get("id") is not None}
+    async def async_save_charging_schedule(
+        self, schedule: dict[str, Any], charge_point_id: str | None = None
+    ) -> dict[str, Any]:
+        """Create or update a schedule, applying it to the charger only when enabled."""
+        state = self.state_for_charge_point(charge_point_id)
+        existing = {str(item.get("id")): item for item in state.charging_schedule if item.get("id") is not None}
         schedule_id = str(schedule.get("id") or _next_schedule_id(existing))
         normalised = _normalise_schedule(schedule, schedule_id)
+        previous_enabled = bool(existing.get(schedule_id, {}).get("enabled"))
+        ocpp_response: dict[str, Any] | None = None
+
+        if normalised["enabled"]:
+            ocpp_response = await self._async_apply_charging_schedule(normalised, charge_point_id=charge_point_id)
+        elif previous_enabled:
+            ocpp_response = await self._async_clear_charging_schedule(charge_point_id=charge_point_id)
 
         updated: list[dict[str, Any]] = []
         replaced = False
-        for item in self.data.charging_schedule:
+        for item in state.charging_schedule:
             if str(item.get("id")) == schedule_id:
                 updated.append(normalised)
                 replaced = True
@@ -874,36 +1591,96 @@ class OcppCoordinator:
                 if str(item.get("id")) != schedule_id:
                     item["enabled"] = False
 
-        self.data.charging_schedule = updated
-        self._notify(persist=True)
-        return normalised
+        state.charging_schedule = updated
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return _schedule_with_ocpp_response(normalised, ocpp_response)
 
-    async def async_set_charging_schedule_enabled(self, schedule_id: str, enabled: bool) -> dict[str, Any]:
-        """Enable or disable one schedule, ensuring only one active schedule exists."""
+    async def async_set_charging_schedule_enabled(
+        self, schedule_id: str, enabled: bool, charge_point_id: str | None = None
+    ) -> dict[str, Any]:
+        """Enable or disable one schedule, ensuring only one active charger profile exists."""
+        state = self.state_for_charge_point(charge_point_id)
         target: dict[str, Any] | None = None
-        for item in self.data.charging_schedule:
+        for item in state.charging_schedule:
             if str(item.get("id")) == str(schedule_id):
-                item["enabled"] = bool(enabled)
+                target = item
+                break
+        if target is None:
+            raise ValueError(f"Unknown schedule: {schedule_id}")
+
+        already_enabled = bool(target.get("enabled"))
+        enabled = bool(enabled)
+        ocpp_response: dict[str, Any] | None = None
+        if enabled:
+            ocpp_response = await self._async_apply_charging_schedule(target, charge_point_id=charge_point_id)
+        elif already_enabled:
+            ocpp_response = await self._async_clear_charging_schedule(charge_point_id=charge_point_id)
+
+        for item in state.charging_schedule:
+            if str(item.get("id")) == str(schedule_id):
+                item["enabled"] = enabled
                 target = item
             elif enabled:
                 item["enabled"] = False
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return _schedule_with_ocpp_response(target, ocpp_response)
+
+    async def async_delete_charging_schedule(
+        self, schedule_id: str, charge_point_id: str | None = None
+    ) -> dict[str, Any] | None:
+        state = self.state_for_charge_point(charge_point_id)
+        target = next(
+            (item for item in state.charging_schedule if str(item.get("id")) == str(schedule_id)),
+            None,
+        )
         if target is None:
             raise ValueError(f"Unknown schedule: {schedule_id}")
-        self._notify(persist=True)
-        return target
 
-    async def async_delete_charging_schedule(self, schedule_id: str) -> None:
-        before = len(self.data.charging_schedule)
-        self.data.charging_schedule = [
-            item for item in self.data.charging_schedule
+        ocpp_response: dict[str, Any] | None = None
+        if target.get("enabled"):
+            ocpp_response = await self._async_clear_charging_schedule(charge_point_id=charge_point_id)
+
+        before = len(state.charging_schedule)
+        state.charging_schedule = [
+            item for item in state.charging_schedule
             if str(item.get("id")) != str(schedule_id)
         ]
-        if len(self.data.charging_schedule) == before:
+        if len(state.charging_schedule) == before:
             raise ValueError(f"Unknown schedule: {schedule_id}")
-        self._notify(persist=True)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return ocpp_response
 
-    async def async_save_rfid_tag(self, tag: dict[str, Any]) -> dict[str, Any]:
-        """Create or update a local RFID tag without OCPP side effects."""
+    async def _async_apply_charging_schedule(
+        self, schedule: dict[str, Any], charge_point_id: str | None = None
+    ) -> dict[str, Any]:
+        result = await self._ocpp_call(
+            "SetChargingProfile",
+            _build_charging_schedule_payload(schedule),
+            timeout=30,
+            charge_point_id=charge_point_id,
+        )
+        _require_ocpp_status("SetChargingProfile", result, {"Accepted"})
+        return result
+
+    async def _async_clear_charging_schedule(self, charge_point_id: str | None = None) -> dict[str, Any]:
+        result = await self._ocpp_call(
+            "ClearChargingProfile",
+            {
+                "connectorId": 0,
+                "chargingProfilePurpose": "TxDefaultProfile",
+                "stackLevel": 0,
+            },
+            timeout=30,
+            charge_point_id=charge_point_id,
+        )
+        _require_ocpp_status("ClearChargingProfile", result, {"Accepted", "Unknown"})
+        return result
+
+    async def async_save_rfid_tag(
+        self, tag: dict[str, Any], charge_point_id: str | None = None
+    ) -> dict[str, Any]:
+        """Create or update an RFID tag on the charger before persisting locally."""
+        state = self.state_for_charge_point(charge_point_id)
         original_raw = tag.get("original_id_tag")
         original_id_tag = str(original_raw or "").strip()
         normalised = _normalise_rfid_tag(tag)
@@ -914,50 +1691,129 @@ class OcppCoordinator:
 
         updated: list[dict[str, Any]] = []
         replaced = False
-        for item in self.data.rfid_tags:
+        previous: dict[str, Any] | None = None
+        for item in state.rfid_tags:
             item_id = str(item.get("id_tag") or "").strip()
             item_key = item_id.casefold()
             if has_original and item_key == original_key:
+                previous = _normalise_rfid_tag(item)
                 updated.append(normalised)
                 replaced = True
             elif item_key == id_tag_key:
+                if not has_original:
+                    previous = _normalise_rfid_tag(item)
+                    updated.append(normalised)
+                    replaced = True
+                    continue
                 raise ValueError(f"ID tag already exists: {id_tag}")
             else:
                 updated.append(item)
         if not replaced:
             updated.append(normalised)
 
-        self.data.rfid_tags = _normalise_rfid_tag_list(updated)
-        self._notify(persist=True)
-        return normalised
+        ocpp_response: dict[str, Any] | None = None
+        if _rfid_tag_requires_ocpp_update(previous, normalised, original_id_tag):
+            entries: list[dict[str, Any]] = []
+            if previous and previous["id_tag"].casefold() != id_tag_key:
+                entries.append({"idTag": previous["id_tag"]})
+            entries.append(_rfid_tag_local_authorization_entry(normalised))
+            ocpp_response = await self._async_send_local_authorization_update(
+                entries,
+                charge_point_id=charge_point_id,
+            )
 
-    async def async_set_rfid_tag_enabled(self, id_tag: str, enabled: bool) -> dict[str, Any]:
+        state.rfid_tags = _normalise_rfid_tag_list(updated)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return _tag_with_ocpp_response(normalised, ocpp_response)
+
+    async def async_set_rfid_tag_enabled(
+        self, id_tag: str, enabled: bool, charge_point_id: str | None = None
+    ) -> dict[str, Any]:
+        state = self.state_for_charge_point(charge_point_id)
         target: dict[str, Any] | None = None
-        for item in self.data.rfid_tags:
+        for item in state.rfid_tags:
             if str(item.get("id_tag")) == str(id_tag):
-                item["enabled"] = bool(enabled)
                 target = item
                 break
         if target is None:
             raise ValueError(f"Unknown ID tag: {id_tag}")
-        self._notify(persist=True)
-        return target
+        enabled = bool(enabled)
+        ocpp_response: dict[str, Any] | None = None
+        if bool(target.get("enabled", True)) != enabled:
+            updated_target = dict(target)
+            updated_target["enabled"] = enabled
+            ocpp_response = await self._async_send_local_authorization_update(
+                [_rfid_tag_local_authorization_entry(_normalise_rfid_tag(updated_target))],
+                charge_point_id=charge_point_id,
+            )
 
-    async def async_delete_rfid_tag(self, id_tag: str) -> None:
-        before = len(self.data.rfid_tags)
-        self.data.rfid_tags = [
-            item for item in self.data.rfid_tags
+        for item in state.rfid_tags:
+            if str(item.get("id_tag")) == str(id_tag):
+                item["enabled"] = enabled
+                target = item
+                break
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return _tag_with_ocpp_response(target, ocpp_response)
+
+    async def async_delete_rfid_tag(self, id_tag: str, charge_point_id: str | None = None) -> dict[str, Any]:
+        state = self.state_for_charge_point(charge_point_id)
+        before = len(state.rfid_tags)
+        target = next(
+            (item for item in state.rfid_tags if str(item.get("id_tag")) == str(id_tag)),
+            None,
+        )
+        if target is None:
+            raise ValueError(f"Unknown ID tag: {id_tag}")
+
+        ocpp_response = await self._async_send_local_authorization_update(
+            [{"idTag": str(target.get("id_tag"))}],
+            charge_point_id=charge_point_id,
+        )
+        state.rfid_tags = [
+            item for item in state.rfid_tags
             if str(item.get("id_tag")) != str(id_tag)
         ]
-        if len(self.data.rfid_tags) == before:
+        if len(state.rfid_tags) == before:
             raise ValueError(f"Unknown ID tag: {id_tag}")
-        self._notify(persist=True)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return ocpp_response
+
+    async def _async_send_local_authorization_update(
+        self,
+        entries: list[dict[str, Any]],
+        charge_point_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not entries:
+            return {"status": "Accepted"}
+
+        version_result = await self._ocpp_call(
+            "GetLocalListVersion",
+            {},
+            timeout=30,
+            charge_point_id=charge_point_id,
+        )
+        current_version = _coerce_int(version_result.get("listVersion") if isinstance(version_result, dict) else None)
+        if current_version is None or current_version < 0:
+            current_version = 0
+        result = await self._ocpp_call(
+            "SendLocalList",
+            {
+                "listVersion": current_version + 1,
+                "updateType": "Differential",
+                "localAuthorizationList": entries,
+            },
+            timeout=30,
+            charge_point_id=charge_point_id,
+        )
+        _require_ocpp_status("SendLocalList", result, {"Accepted"})
+        return result
 
     async def async_remote_start_transaction(
         self,
         id_tag: str | None = None,
         connector_id: int | None = None,
         charging_profile: dict[str, Any] | None = None,
+        charge_point_id: str | None = None,
     ) -> dict[str, Any]:
         """Issue an OCPP RemoteStartTransaction command."""
         payload: dict[str, Any] = {"idTag": id_tag or DEFAULT_REMOTE_ID_TAG}
@@ -965,139 +1821,162 @@ class OcppCoordinator:
             payload["connectorId"] = connector_id
         if charging_profile is not None:
             payload["chargingProfile"] = charging_profile
-        result = await self._ocpp_call("RemoteStartTransaction", payload)
+        result = await self._ocpp_call("RemoteStartTransaction", payload, charge_point_id=charge_point_id)
         _LOGGER.info("RemoteStartTransaction payload=%s → %s", payload, result.get("status"))
         return result
 
-    async def async_start_charging(self) -> dict[str, Any]:
+    async def async_start_charging(self, charge_point_id: str | None = None) -> dict[str, Any]:
         """Request an immediate charging session."""
-        return await self.async_remote_start_transaction(connector_id=1)
+        return await self.async_remote_start_transaction(connector_id=1, charge_point_id=charge_point_id)
 
-    async def async_stop_charging(self) -> dict[str, Any]:
+    async def async_stop_charging(self, charge_point_id: str | None = None) -> dict[str, Any]:
         """Request the charger to stop the current transaction."""
-        if self.data.transaction_id is None:
+        state = self.state_for_charge_point(charge_point_id)
+        if state.transaction_id is None:
             raise RuntimeError("No active transaction id is available")
-        result = await self._ocpp_call("RemoteStopTransaction", {"transactionId": self.data.transaction_id})
-        _LOGGER.info("RemoteStopTransaction(%s) → %s", self.data.transaction_id, result.get("status"))
+        result = await self._ocpp_call(
+            "RemoteStopTransaction",
+            {"transactionId": state.transaction_id},
+            charge_point_id=charge_point_id,
+        )
+        _LOGGER.info("RemoteStopTransaction(%s) → %s", state.transaction_id, result.get("status"))
         return result
 
-    def has_open_transaction(self) -> bool:
+    def has_open_transaction(self, charge_point_id: str | None = None) -> bool:
         """Return whether a StartTransaction has been seen without a matching StopTransaction."""
-        return self.data.transaction_id is not None and self.data.transaction_ended_at is None
+        state = self.state_for_charge_point(charge_point_id)
+        return state.transaction_id is not None and state.transaction_ended_at is None
 
-    async def _async_handle_plug_and_go_start(self) -> None:
+    async def _async_handle_plug_and_go_start(self, charge_point_id: str | None = None) -> None:
         """Start charging after a real unplugged -> plugged status edge."""
+        state = self.state_for_charge_point(charge_point_id)
         try:
-            result = await self.async_start_charging()
+            result = await self.async_start_charging(charge_point_id=charge_point_id)
             status = str(result.get("status", ""))
             if status and status != "Accepted":
-                self.data.plug_and_go_last_error = status
+                state.plug_and_go_last_error = status
             else:
-                self.data.plug_and_go_last_error = None
+                state.plug_and_go_last_error = None
             _LOGGER.info("Plug and Go remote start result: %s", result)
         except Exception as err:
-            self.data.plug_and_go_last_error = str(err)
+            state.plug_and_go_last_error = str(err)
             _LOGGER.warning("Plug and Go failed to start charging: %s", err)
         finally:
-            self.data.plug_and_go_start_pending = False
-            self._notify()
+            state.plug_and_go_start_pending = False
+            self._persist_charge_point_state(charge_point_id, state, persist=True)
 
-    async def async_read_cp_voltage(self) -> dict[str, Any]:
+    async def async_read_cp_voltage(self, charge_point_id: str | None = None) -> dict[str, Any]:
         """Read CP voltage and duty cycle via GivEnergy vendor DataTransfer."""
         result = await self._ocpp_call(
             "DataTransfer",
             {"vendorId": "GivEnergy", "messageId": "Parameter", "data": "CP"},
+            charge_point_id=charge_point_id,
         )
         status = str(result.get("status", ""))
         data = result.get("data")
         if status == "Accepted" and data:
             m = CP_READING_PATTERN.search(str(data))
             if m:
-                self.data.cp_voltage_v = float(m.group("voltage"))
-                self.data.cp_duty_cycle_percent = float(m.group("duty"))
-                _LOGGER.info("CP reading: %.1fV / %.1f%%", self.data.cp_voltage_v, self.data.cp_duty_cycle_percent)
-                self._notify()
+                state = self.state_for_charge_point(charge_point_id)
+                state.cp_voltage_v = float(m.group("voltage"))
+                state.cp_duty_cycle_percent = float(m.group("duty"))
+                _LOGGER.info("CP reading: %.1fV / %.1f%%", state.cp_voltage_v, state.cp_duty_cycle_percent)
+                self._persist_charge_point_state(charge_point_id, state, persist=True)
         return result
 
-    async def async_trigger_meter_values(self, connector_id: int = 1) -> dict[str, Any]:
+    async def async_trigger_meter_values(
+        self, connector_id: int = 1, charge_point_id: str | None = None
+    ) -> dict[str, Any]:
         """Ask the charger to send a MeterValues frame immediately."""
         return await self._ocpp_call(
             "TriggerMessage",
             {"requestedMessage": "MeterValues", "connectorId": connector_id},
+            charge_point_id=charge_point_id,
         )
 
-    async def async_unlock_connector(self, connector_id: int = 1) -> dict[str, Any]:
-        result = await self._ocpp_call("UnlockConnector", {"connectorId": connector_id})
+    async def async_unlock_connector(
+        self, connector_id: int = 1, charge_point_id: str | None = None
+    ) -> dict[str, Any]:
+        result = await self._ocpp_call(
+            "UnlockConnector",
+            {"connectorId": connector_id},
+            charge_point_id=charge_point_id,
+        )
         _LOGGER.info("UnlockConnector → %s", result.get("status"))
         return result
 
-    async def async_reset(self, reset_type: str = "Soft") -> dict[str, Any]:
-        result = await self._ocpp_call("Reset", {"type": reset_type})
+    async def async_reset(self, reset_type: str = "Soft", charge_point_id: str | None = None) -> dict[str, Any]:
+        result = await self._ocpp_call("Reset", {"type": reset_type}, charge_point_id=charge_point_id)
         _LOGGER.info("Reset(%s) → %s", reset_type, result.get("status"))
         return result
 
     # ── Firmware management ─────────────────────────────────────────────
 
-    async def async_refresh_firmware_manifest(self) -> None:
+    async def async_refresh_firmware_manifest(self, charge_point_id: str | None = None) -> None:
         """Fetch and parse the configured firmware manifest."""
+        state = self.state_for_charge_point(charge_point_id)
         if not self.firmware_manifest_url:
-            self.data.firmware_manifest_error = "No firmware manifest URL is configured"
-            self.data.firmware_manifest_entries = {}
-            self._refresh_available_firmware_files()
-            self._notify()
+            state.firmware_manifest_error = "No firmware manifest URL is configured"
+            state.firmware_manifest_entries = {}
+            self._refresh_available_firmware_files(state=state)
+            self._persist_charge_point_state(charge_point_id, state, persist=True)
             return
 
         try:
+            _assert_safe_url(self.firmware_manifest_url)
             async with aiohttp.ClientSession() as session:
-                async with session.get(self.firmware_manifest_url, allow_redirects=True) as response:
+                async with session.get(self.firmware_manifest_url, allow_redirects=False) as response:
                     if response.status != 200:
                         raise RuntimeError(f"Manifest request failed with HTTP {response.status}")
                     manifest = json.loads(await response.text())
         except Exception as err:
-            self.data.firmware_manifest_error = str(err)
-            self.data.firmware_manifest_entries = {}
-            self._refresh_available_firmware_files()
-            self._notify()
+            state.firmware_manifest_error = str(err)
+            state.firmware_manifest_entries = {}
+            self._refresh_available_firmware_files(state=state)
+            self._persist_charge_point_state(charge_point_id, state, persist=True)
             raise RuntimeError(
                 f"Unable to load firmware manifest from {self.firmware_manifest_url}: {err}"
             ) from err
 
-        self.data.firmware_manifest_entries = self._parse_firmware_manifest(manifest)
-        self.data.firmware_manifest_error = None
-        self.data.firmware_manifest_refreshed_at = datetime.now(UTC)
-        self._refresh_available_firmware_files()
-        self._notify()
+        state.firmware_manifest_entries = self._parse_firmware_manifest(manifest, state=state)
+        state.firmware_manifest_error = None
+        state.firmware_manifest_refreshed_at = datetime.now(UTC)
+        self._refresh_available_firmware_files(state=state)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
 
-    def firmware_catalog(self) -> dict[str, Any]:
+    def firmware_catalog(self, charge_point_id: str | None = None) -> dict[str, Any]:
         """Return firmware entries with action metadata for the UI."""
-        self._refresh_available_firmware_files()
+        state = self.state_for_charge_point(charge_point_id)
+        self._refresh_available_firmware_files(state=state)
         entries = []
-        for filename in self.data.available_firmware_files:
-            entry = self.data.firmware_manifest_entries.get(filename, {})
+        for filename in state.available_firmware_files:
+            entry = state.firmware_manifest_entries.get(filename, {})
             version = entry.get("version")
             entries.append({
                 **entry,
-                "action": self.firmware_action_for_version(version),
+                "action": self.firmware_action_for_version(version, charge_point_id=charge_point_id),
             })
         return {
-            "current_version": self.data.firmware_version,
-            "selected_firmware_file": self.data.selected_firmware_file,
-            "manifest_error": self.data.firmware_manifest_error,
+            "current_version": state.firmware_version,
+            "selected_firmware_file": state.selected_firmware_file,
+            "manifest_error": state.firmware_manifest_error,
             "manifest_refreshed_at": (
-                self.data.firmware_manifest_refreshed_at.isoformat()
-                if self.data.firmware_manifest_refreshed_at
+                state.firmware_manifest_refreshed_at.isoformat()
+                if state.firmware_manifest_refreshed_at
                 else None
             ),
             "entries": entries,
         }
 
-    def _parse_firmware_manifest(self, manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def _parse_firmware_manifest(
+        self, manifest: dict[str, Any], *, state: ChargerState | None = None
+    ) -> dict[str, dict[str, Any]]:
         """Parse the upstream firmware manifest into filename-indexed entries."""
         models = manifest.get("models")
         if not isinstance(models, dict):
             raise RuntimeError("Firmware manifest does not contain a valid models map")
 
-        preferred_model = self._derive_manifest_model_key()
+        preferred_model = self._derive_manifest_model_key(state=state)
         if preferred_model and isinstance(models.get(preferred_model), dict):
             selected_models = [(preferred_model, models[preferred_model])]
         else:
@@ -1134,9 +2013,10 @@ class OcppCoordinator:
             raise RuntimeError("Firmware manifest did not yield any usable firmware entries")
         return entries
 
-    def _derive_manifest_model_key(self) -> str | None:
+    def _derive_manifest_model_key(self, *, state: ChargerState | None = None) -> str | None:
         """Infer the firmware manifest model key from the charger firmware string."""
-        version = self.data.firmware_version
+        state = state or self.data
+        version = state.firmware_version
         if not version:
             return None
         parts = str(version).strip().split("_")
@@ -1144,37 +2024,48 @@ class OcppCoordinator:
             return None
         return "_".join(parts[:-1])
 
-    def _refresh_available_firmware_files(self) -> None:
+    def _refresh_available_firmware_files(self, *, state: ChargerState | None = None) -> None:
+        state = state or self.data
         files = sorted(
-            self.data.firmware_manifest_entries,
+            state.firmware_manifest_entries,
             key=lambda filename: _firmware_version_key(
-                self.data.firmware_manifest_entries[filename].get("version")
+                state.firmware_manifest_entries[filename].get("version")
             ),
         )
-        self.data.available_firmware_files = files
-        if self.data.selected_firmware_file not in files:
-            self.data.selected_firmware_file = files[-1] if files else None
+        state.available_firmware_files = files
+        if state.selected_firmware_file not in files:
+            state.selected_firmware_file = files[-1] if files else None
 
     def firmware_file_path(self, filename: str) -> Path:
         if self.firmware_directory is None:
             raise RuntimeError("Firmware directory is not configured")
         return self.firmware_directory / Path(filename).name
 
-    async def _async_download_firmware_for_install(self, filename: str) -> Path:
-        entry = self.data.firmware_manifest_entries.get(filename)
+    async def _async_download_firmware_for_install(
+        self, filename: str, *, state: ChargerState | None = None
+    ) -> Path:
+        state = state or self.data
+        entry = state.firmware_manifest_entries.get(filename)
         if not entry:
             raise RuntimeError(f"No manifest entry was found for firmware file: {filename}")
 
         target_path = self.firmware_file_path(filename)
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(_unlink_if_exists, target_path)
-        try:
-            await self._async_download_firmware(target_path, entry)
-            if not await self._async_firmware_file_matches_manifest(target_path, entry):
-                raise RuntimeError(f"Downloaded firmware failed checksum validation: {filename}")
-        except Exception:
+        lock_key = Path(filename).name
+        lock = self._firmware_download_locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
+            if await self._async_firmware_file_matches_manifest(target_path, entry):
+                _LOGGER.info("Using cached firmware file: %s", target_path)
+                return target_path
+
             await asyncio.to_thread(_unlink_if_exists, target_path)
-            raise
+            try:
+                await self._async_download_firmware(target_path, entry)
+                if not await self._async_firmware_file_matches_manifest(target_path, entry):
+                    raise RuntimeError(f"Downloaded firmware failed checksum validation: {filename}")
+            except Exception:
+                await asyncio.to_thread(_unlink_if_exists, target_path)
+                raise
         return target_path
 
     async def _async_firmware_file_matches_manifest(
@@ -1196,8 +2087,9 @@ class OcppCoordinator:
             temp_path.unlink()
 
         try:
+            _assert_safe_url(download_url)
             async with aiohttp.ClientSession() as session:
-                async with session.get(download_url, allow_redirects=True) as response:
+                async with session.get(download_url, allow_redirects=False) as response:
                     if response.status != 200:
                         raise RuntimeError(f"Firmware download failed with HTTP {response.status}")
                     data = await response.read()
@@ -1215,75 +2107,294 @@ class OcppCoordinator:
             if temp_path.exists():
                 temp_path.unlink()
 
-    async def async_install_firmware_file(self, filename: str) -> dict[str, Any]:
+    async def async_install_firmware_file(
+        self, filename: str, charge_point_id: str | None = None
+    ) -> dict[str, Any]:
         """Download a manifest firmware file and send OCPP UpdateFirmware."""
-        await self.async_refresh_firmware_manifest()
+        await self.async_refresh_firmware_manifest(charge_point_id=charge_point_id)
+        state = self.state_for_charge_point(charge_point_id)
         filename = Path(str(filename)).name
-        if filename not in self.data.available_firmware_files:
+        if filename not in state.available_firmware_files:
             raise RuntimeError(f"Unknown firmware file from manifest: {filename}")
-        if not self.data.connected:
+        if not self.command_session_available(charge_point_id or state.charge_point_id):
             raise RuntimeError("No charger connected")
-        if not self.data.firmware_server_host:
+        if not state.firmware_server_host:
             raise RuntimeError("Unable to determine the firmware server host for the charger")
 
-        self.data.selected_firmware_file = filename
-        downloaded_path = await self._async_download_firmware_for_install(filename)
+        state.selected_firmware_file = filename
+        state.firmware_transfer_progress = {
+            "active": True,
+            "event": "preparing",
+            "filename": filename,
+            "percent": 0,
+            "status": "Preparing firmware file",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        await self._async_download_firmware_for_install(filename, state=state)
 
         retrieve_at = (datetime.now(UTC) + timedelta(seconds=60)).replace(microsecond=0)
         location = (
-            f"ftp://{self.data.firmware_server_host}:{self.firmware_server_port}/"
+            f"ftp://{state.firmware_server_host}:{self.firmware_public_port}/"
             f"ChargerFirmware/{quote(filename)}"
         )
-        try:
-            result = await self.async_update_firmware(
-                location=location,
-                retrieve_date=retrieve_at.isoformat().replace("+00:00", "Z"),
-                retries=1,
-                retry_interval=60,
-            )
-        except Exception as err:
-            if "timed out" in str(err).lower():
-                self._schedule_firmware_file_cleanup(downloaded_path, delay_seconds=20 * 60)
-            else:
-                await asyncio.to_thread(_unlink_if_exists, downloaded_path)
-            raise
-
-        self._schedule_firmware_file_cleanup(downloaded_path, delay_seconds=20 * 60)
+        result = await self.async_update_firmware(
+            location=location,
+            retrieve_date=retrieve_at.isoformat().replace("+00:00", "Z"),
+            retries=1,
+            retry_interval=60,
+            charge_point_id=charge_point_id,
+        )
         return result
 
     def record_firmware_transfer_event(self, event: dict[str, Any]) -> None:
-        """Observe firmware-server events and clean temporary firmware files."""
+        """Observe firmware-server events and expose transfer progress to the UI."""
         event_type = event.get("event")
         filename = event.get("filename") or event.get("requested_filename")
-        target_file = self.data.firmware_update_target_file or self.data.selected_firmware_file
-        if event_type == "file_sent" and filename and filename == target_file:
-            self._cleanup_firmware_file("served")
-
-    def _schedule_firmware_file_cleanup(self, path: Path, delay_seconds: int) -> None:
-        self._firmware_cleanup_path = path
-        if self._firmware_cleanup_task is not None:
-            self._firmware_cleanup_task.cancel()
-        self._firmware_cleanup_task = asyncio.create_task(
-            self._async_cleanup_firmware_file_later(delay_seconds)
-        )
-
-    async def _async_cleanup_firmware_file_later(self, delay_seconds: int) -> None:
-        try:
-            await asyncio.sleep(delay_seconds)
-            self._cleanup_firmware_file("timeout")
-        except asyncio.CancelledError:
-            pass
-
-    def _cleanup_firmware_file(self, reason: str) -> None:
-        path = self._firmware_cleanup_path
-        if self._firmware_cleanup_task is not None:
-            self._firmware_cleanup_task.cancel()
-            self._firmware_cleanup_task = None
-        self._firmware_cleanup_path = None
-        if path is None:
+        if event_type == "file_sent" and filename:
+            _LOGGER.info("Firmware file served from central cache: %s", Path(str(filename)).name)
+        charge_point_id = self._charge_point_id_for_firmware_event(event)
+        if not charge_point_id:
             return
-        _unlink_if_exists(path)
-        _LOGGER.info("Removed temporary firmware file after %s: %s", reason, path)
+
+        state = self.state_for_charge_point(charge_point_id)
+        progress = dict(state.firmware_transfer_progress or {})
+        now = datetime.now(UTC).isoformat()
+        event_name = str(event_type or "unknown")
+        if state.firmware_update_state in {"Cancelled", "Installed", "Failed"} and event_name not in {"transfer_cancelled"}:
+            return
+        terminal_errors = {
+            "file_not_found",
+            "checksum_missing",
+            "checksum_mismatch",
+            "chunk_read_error",
+            "client_error",
+            "socket_timeout",
+        }
+
+        if event_name == "download_started":
+            chunk_count = _to_int(event.get("chunk_count"), 0)
+            progress = {
+                "active": True,
+                "event": event_name,
+                "filename": Path(str(filename or "")).name or filename,
+                "remote": event.get("remote"),
+                "trace": event.get("trace"),
+                "bytes_total": _to_int(event.get("filesize"), 0),
+                "bytes_sent": 0,
+                "chunk_size": _to_int(event.get("chunk_size"), 0),
+                "chunks_total": chunk_count,
+                "chunks_sent": 0,
+                "percent": 0,
+                "status": "Transfer started",
+                "updated_at": now,
+            }
+        elif event_name == "request_received":
+            progress.update(
+                {
+                    "active": True,
+                    "event": event_name,
+                    "filename": Path(str(filename or progress.get("filename") or "")).name,
+                    "remote": event.get("remote") or progress.get("remote"),
+                    "trace": event.get("trace") or progress.get("trace"),
+                    "status": "Firmware request received",
+                    "updated_at": now,
+                }
+            )
+        elif event_name == "control_frame_sent":
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if payload.get("packnum") or payload.get("filesize"):
+                progress.update(
+                    {
+                        "active": True,
+                        "event": event_name,
+                        "remote": event.get("remote") or progress.get("remote"),
+                        "trace": event.get("trace") or progress.get("trace"),
+                        "bytes_total": _to_int(payload.get("filesize"), _to_int(progress.get("bytes_total"), 0)),
+                        "chunks_total": _to_int(payload.get("packnum"), _to_int(progress.get("chunks_total"), 0)),
+                        "status": "Transfer metadata sent",
+                        "updated_at": now,
+                    }
+                )
+        elif event_name == "control_frame_received":
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if "packsn" in payload:
+                packsn = _to_int(payload.get("packsn"), -1)
+                chunks_sent = max(_to_int(progress.get("chunks_sent"), 0), packsn + 1)
+                chunks_total = _to_int(progress.get("chunks_total"), 0)
+                percent = round((chunks_sent / chunks_total) * 100, 1) if chunks_total > 0 else progress.get("percent")
+                progress.update(
+                    {
+                        "active": True,
+                        "event": event_name,
+                        "remote": event.get("remote") or progress.get("remote"),
+                        "trace": event.get("trace") or progress.get("trace"),
+                        "chunks_sent": chunks_sent,
+                        "percent": percent,
+                        "status": "Transferring firmware",
+                        "updated_at": now,
+                    }
+                )
+        elif event_name == "chunk_sent":
+            packsn = _to_int(event.get("packsn"), -1)
+            chunks_sent = max(_to_int(progress.get("chunks_sent"), 0), packsn + 1)
+            chunks_total = _to_int(progress.get("chunks_total"), 0)
+            percent = round((chunks_sent / chunks_total) * 100, 1) if chunks_total > 0 else None
+            progress.update(
+                {
+                    "active": True,
+                    "event": event_name,
+                    "remote": event.get("remote") or progress.get("remote"),
+                    "trace": event.get("trace") or progress.get("trace"),
+                    "chunks_sent": chunks_sent,
+                    "bytes_sent": _to_int(progress.get("bytes_sent"), 0) + _to_int(event.get("bytes"), 0),
+                    "percent": percent,
+                    "status": "Transferring firmware",
+                    "updated_at": now,
+                }
+            )
+        elif event_name == "checksum_ok":
+            self._mark_firmware_download_complete(state, filename or progress.get("filename"), now)
+            progress = dict(state.firmware_transfer_progress or {})
+        elif event_name == "file_sent":
+            if progress.get("event") not in terminal_errors and progress.get("status") != "Transfer failed":
+                self._mark_firmware_download_complete(state, filename or progress.get("filename"), now)
+                progress = dict(state.firmware_transfer_progress or {})
+        elif event_name == "disconnect" and (
+            state.firmware_update_state in {"Downloaded", "Installing"}
+            or (
+                _to_int(progress.get("chunks_total"), 0) > 0
+                and _to_int(progress.get("chunks_sent"), 0) >= _to_int(progress.get("chunks_total"), 0)
+            )
+            or float(progress.get("percent") or 0) >= 100
+        ):
+            if state.firmware_update_state not in {"Downloaded", "Installing"}:
+                self._mark_firmware_download_complete(state, filename or progress.get("filename"), now)
+            self._mark_firmware_installing_after_disconnect(state, now=now)
+            progress = dict(state.firmware_transfer_progress or {})
+        elif event_name in terminal_errors:
+            progress.update(
+                {
+                    "active": False,
+                    "event": event_name,
+                    "filename": filename or progress.get("filename"),
+                    "error": event.get("error") or event_name.replace("_", " "),
+                    "status": "Transfer failed",
+                    "updated_at": now,
+                }
+            )
+            state.firmware_update_state = "Failed"
+            state.firmware_update_completed_at = datetime.now(UTC)
+            state.firmware_update_failure_reason = str(progress.get("error") or event_name)
+        elif event_name == "transfer_cancelled":
+            state.firmware_update_state = "Cancelled"
+            state.firmware_update_completed_at = datetime.now(UTC)
+            state.firmware_update_expected_reconnect_by = None
+            state.firmware_update_failure_reason = "Cancelled by user"
+            progress.update(
+                {
+                    "active": False,
+                    "event": event_name,
+                    "filename": filename or progress.get("filename"),
+                    "error": "Cancelled by user",
+                    "status": "Firmware transfer cancelled",
+                    "updated_at": now,
+                }
+            )
+        else:
+            progress.update(
+                {
+                    "event": event_name,
+                    "filename": filename or progress.get("filename"),
+                    "status": event_name.replace("_", " ").title(),
+                    "updated_at": now,
+                }
+            )
+
+        state.firmware_transfer_progress = progress
+        self._persist_charge_point_state(charge_point_id, state, persist=False)
+
+    def cancel_firmware_update(self, charge_point_id: str | None = None, reason: str = "Cancelled by user") -> dict[str, Any]:
+        """Mark the active firmware transfer as cancelled."""
+        state = self.state_for_charge_point(charge_point_id)
+        progress = dict(state.firmware_transfer_progress or {})
+        if state.firmware_update_state == "Cancelled":
+            return {
+                "ok": True,
+                "status": "Cancelled",
+                "firmware_transfer_progress": progress,
+            }
+        event_name = str(progress.get("event") or "")
+        transferable_events = {
+            "download_started",
+            "request_received",
+            "control_frame_sent",
+            "control_frame_received",
+            "chunk_sent",
+            "ocpp_downloading",
+        }
+        if state.firmware_update_state not in {"Downloading"} and event_name not in transferable_events:
+            raise RuntimeError("No active firmware file transfer to cancel")
+
+        now = datetime.now(UTC)
+        state.firmware_update_state = "Cancelled"
+        state.firmware_update_completed_at = now
+        state.firmware_update_expected_reconnect_by = None
+        state.firmware_update_failure_reason = reason
+        progress.update(
+            {
+                "active": False,
+                "event": "transfer_cancelled",
+                "filename": progress.get("filename") or state.firmware_update_target_file,
+                "error": reason,
+                "status": "Firmware transfer cancelled",
+                "updated_at": now.isoformat(),
+            }
+        )
+        state.firmware_transfer_progress = progress
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        return {
+            "ok": True,
+            "status": "Cancelled",
+            "firmware_transfer_progress": progress,
+        }
+
+    def _charge_point_id_for_firmware_event(self, event: dict[str, Any]) -> str | None:
+        filename = event.get("filename") or event.get("requested_filename")
+        filename_name = Path(str(filename or "")).name
+        active_names = {
+            Path(str(value)).name
+            for value in {
+                self.data.firmware_update_target_file,
+                self.data.selected_firmware_file,
+            }
+            if value
+        }
+        if filename_name and filename_name in active_names:
+            return self.data.charge_point_id
+        trace = event.get("trace")
+        active_progress = self.data.firmware_transfer_progress or {}
+        if trace and trace == active_progress.get("trace"):
+            return self.data.charge_point_id
+
+        remote = str(event.get("remote") or "").strip()
+        remote_host = remote.rsplit(":", 1)[0] if ":" in remote else remote
+        if remote_host:
+            for item in self._connected_charge_points.values():
+                if remote_host in {
+                    str(item.get("remote_address") or ""),
+                    str(item.get("local_ip_address") or ""),
+                }:
+                    return str(item.get("charge_point_id") or "").strip() or None
+            if remote_host in {
+                str(self.data.websocket_remote_address or ""),
+                str(self.data.local_ip_address or ""),
+            }:
+                return self.data.charge_point_id
+
+        if filename_name and filename_name == Path(str(self.data.firmware_update_target_file or "")).name:
+            return self.data.charge_point_id
+        return self.data.charge_point_id
 
     async def async_update_firmware(
         self,
@@ -1291,9 +2402,11 @@ class OcppCoordinator:
         retrieve_date: str,
         retries: int | None = None,
         retry_interval: int | None = None,
+        charge_point_id: str | None = None,
     ) -> dict[str, Any]:
         """Issue an OCPP UpdateFirmware command."""
-        if self._firmware_update_in_progress():
+        state = self.state_for_charge_point(charge_point_id)
+        if self._firmware_update_in_progress(state=state):
             raise RuntimeError("A firmware update is already in progress")
 
         payload: dict[str, Any] = {
@@ -1305,61 +2418,298 @@ class OcppCoordinator:
         if retry_interval is not None:
             payload["retryInterval"] = retry_interval
 
-        self.data.last_update_firmware_request = dict(payload)
-        self._start_firmware_update_session(location)
-        result = await self._ocpp_call("UpdateFirmware", payload)
+        state.last_update_firmware_request = dict(payload)
+        self._start_firmware_update_session(location, state=state)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
+        try:
+            result = await self._ocpp_call("UpdateFirmware", payload, charge_point_id=charge_point_id)
+        except Exception as err:
+            state.firmware_update_state = "Failed"
+            state.firmware_update_failure_reason = str(err)
+            state.firmware_transfer_progress = {
+                **(state.firmware_transfer_progress or {}),
+                "active": False,
+                "event": "update_request_failed",
+                "error": str(err),
+                "status": "Update request failed",
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+            self._persist_charge_point_state(charge_point_id, state, persist=True)
+            raise
         _LOGGER.info("UpdateFirmware requested: %s", payload)
-        self._notify(persist=True)
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
         return result
 
-    def _firmware_update_in_progress(self) -> bool:
-        return self.data.firmware_update_state in {"Requested", "Downloading", "Downloaded", "Installing"}
+    def _firmware_update_in_progress(self, *, state: ChargerState | None = None) -> bool:
+        state = state or self.data
+        return state.firmware_update_state in {"Requested", "Downloading", "Downloaded", "Installing"}
 
-    def _start_firmware_update_session(self, location: str) -> None:
-        target_file = self.data.selected_firmware_file or Path(location).name or None
-        self.data.firmware_status = None
-        self.data.firmware_update_state = "Requested"
-        self.data.firmware_update_target_file = target_file
-        self.data.firmware_update_target_version = _derive_firmware_version_from_filename(target_file)
-        self.data.firmware_update_previous_version = self.data.firmware_version
-        self.data.firmware_update_started_at = datetime.now(UTC)
-        self.data.firmware_update_completed_at = None
-        self.data.firmware_update_failure_reason = None
+    def _start_firmware_update_session(self, location: str, *, state: ChargerState | None = None) -> None:
+        state = state or self.data
+        target_file = state.selected_firmware_file or Path(location).name or None
+        state.firmware_status = None
+        state.firmware_update_state = "Requested"
+        state.firmware_update_target_file = target_file
+        state.firmware_update_target_version = _derive_firmware_version_from_filename(target_file)
+        state.firmware_update_previous_version = state.firmware_version
+        state.firmware_update_started_at = datetime.now(UTC)
+        state.firmware_update_download_completed_at = None
+        state.firmware_update_install_started_at = None
+        state.firmware_update_expected_reconnect_by = None
+        state.firmware_update_completed_at = None
+        state.firmware_update_failure_reason = None
+        state.firmware_transfer_progress = {
+            "active": True,
+            "event": "update_requested",
+            "filename": target_file,
+            "percent": 0,
+            "status": "Waiting for charger download request",
+            "updated_at": state.firmware_update_started_at.isoformat(),
+        }
 
-    def firmware_action_for_version(self, target_version: Any) -> str:
-        comparison = _compare_firmware_versions(target_version, self.data.firmware_version)
+    def _mark_firmware_download_complete(
+        self,
+        state: ChargerState,
+        filename: Any = None,
+        now: str | None = None,
+    ) -> None:
+        updated_at = now or datetime.now(UTC).isoformat()
+        state.firmware_update_state = "Downloaded"
+        state.firmware_update_download_completed_at = state.firmware_update_download_completed_at or datetime.now(UTC)
+        progress = dict(state.firmware_transfer_progress or {})
+        progress.update(
+            {
+                "active": True,
+                "event": "applying",
+                "filename": Path(str(filename or progress.get("filename") or "")).name,
+                "percent": 100,
+                "status": "Transfer complete - charger is applying firmware and will restart",
+                "updated_at": updated_at,
+            }
+        )
+        state.firmware_transfer_progress = progress
+
+    def _mark_firmware_installing_after_disconnect(
+        self,
+        state: ChargerState,
+        *,
+        now: str | None = None,
+    ) -> None:
+        if state.firmware_update_state not in {"Downloaded", "Installing"}:
+            return
+        updated_at = now or datetime.now(UTC).isoformat()
+        current_time = datetime.now(UTC)
+        state.firmware_update_state = "Installing"
+        state.firmware_update_install_started_at = state.firmware_update_install_started_at or current_time
+        state.firmware_update_expected_reconnect_by = current_time + FIRMWARE_INSTALLING_TIMEOUT
+        progress = dict(state.firmware_transfer_progress or {})
+        progress.update(
+            {
+                "active": True,
+                "event": "restarting",
+                "filename": progress.get("filename") or state.firmware_update_target_file,
+                "percent": 100,
+                "status": "Charger is restarting to apply firmware",
+                "updated_at": updated_at,
+            }
+        )
+        state.firmware_transfer_progress = progress
+
+    def _mark_firmware_result_from_observed_version(self, state: ChargerState) -> None:
+        if state.firmware_update_state not in {"Downloaded", "Installing", "Installed"}:
+            return
+        target = state.firmware_update_target_version
+        current = state.firmware_version
+        if not target or not current:
+            return
+        progress = dict(state.firmware_transfer_progress or {})
+        if _firmware_version_key(target) == _firmware_version_key(current):
+            state.firmware_update_state = "Installed"
+            state.firmware_update_completed_at = datetime.now(UTC)
+            state.firmware_update_failure_reason = None
+            state.firmware_update_expected_reconnect_by = None
+            progress.update(
+                {
+                    "active": False,
+                    "event": "installed",
+                    "filename": progress.get("filename") or state.firmware_update_target_file,
+                    "percent": 100,
+                    "status": f"Firmware installed: {current}",
+                    "updated_at": state.firmware_update_completed_at.isoformat(),
+                }
+            )
+            state.firmware_transfer_progress = progress
+            return
+
+        state.firmware_update_state = "Failed"
+        state.firmware_update_completed_at = datetime.now(UTC)
+        state.firmware_update_failure_reason = f"Charger restarted on {current}, expected {target}"
+        state.firmware_update_expected_reconnect_by = None
+        progress.update(
+            {
+                "active": False,
+                "event": "version_mismatch",
+                "filename": progress.get("filename") or state.firmware_update_target_file,
+                "percent": 100,
+                "error": state.firmware_update_failure_reason,
+                "status": "Firmware update did not apply",
+                "updated_at": state.firmware_update_completed_at.isoformat(),
+            }
+        )
+        state.firmware_transfer_progress = progress
+
+    def _apply_firmware_ocpp_status(self, state: ChargerState, status: Any) -> None:
+        if status in (None, ""):
+            return
+        normalized = str(status).strip()
+        now = datetime.now(UTC)
+        progress = dict(state.firmware_transfer_progress or {})
+        state.firmware_status = normalized
+
+        if normalized == "Downloading":
+            state.firmware_update_state = "Downloading"
+            progress.update(
+                {
+                    "active": True,
+                    "event": "ocpp_downloading",
+                    "filename": progress.get("filename") or state.firmware_update_target_file,
+                    "status": "Charger is downloading firmware",
+                    "updated_at": now.isoformat(),
+                }
+            )
+        elif normalized == "Downloaded":
+            self._mark_firmware_download_complete(state, progress.get("filename") or state.firmware_update_target_file, now.isoformat())
+            return
+        elif normalized in {"Installing", "InstallScheduled"}:
+            state.firmware_update_state = "Installing"
+            state.firmware_update_install_started_at = state.firmware_update_install_started_at or now
+            state.firmware_update_expected_reconnect_by = now + FIRMWARE_INSTALLING_TIMEOUT
+            progress.update(
+                {
+                    "active": True,
+                    "event": "ocpp_installing",
+                    "filename": progress.get("filename") or state.firmware_update_target_file,
+                    "percent": 100,
+                    "status": "Charger is applying firmware and restarting",
+                    "updated_at": now.isoformat(),
+                }
+            )
+        elif normalized == "Installed":
+            state.firmware_update_state = "Installed"
+            state.firmware_update_completed_at = now
+            state.firmware_update_failure_reason = None
+            state.firmware_update_expected_reconnect_by = None
+            progress.update(
+                {
+                    "active": False,
+                    "event": "installed",
+                    "filename": progress.get("filename") or state.firmware_update_target_file,
+                    "percent": 100,
+                    "status": "Firmware installed",
+                    "updated_at": now.isoformat(),
+                }
+            )
+        elif normalized in {"DownloadFailed", "InstallationFailed", "InvalidSignature", "SignatureVerifiedFailed"}:
+            state.firmware_update_state = "Failed"
+            state.firmware_update_completed_at = now
+            state.firmware_update_failure_reason = normalized
+            state.firmware_update_expected_reconnect_by = None
+            progress.update(
+                {
+                    "active": False,
+                    "event": "firmware_status_failed",
+                    "filename": progress.get("filename") or state.firmware_update_target_file,
+                    "percent": 100,
+                    "error": normalized,
+                    "status": "Firmware update failed",
+                    "updated_at": now.isoformat(),
+                }
+            )
+        else:
+            progress.update(
+                {
+                    "event": "firmware_status",
+                    "filename": progress.get("filename") or state.firmware_update_target_file,
+                    "status": f"Charger status: {normalized}",
+                    "updated_at": now.isoformat(),
+                }
+            )
+        state.firmware_transfer_progress = progress
+
+    def firmware_action_for_version(self, target_version: Any, charge_point_id: str | None = None) -> str:
+        state = self.state_for_charge_point(charge_point_id)
+        comparison = _compare_firmware_versions(target_version, state.firmware_version)
         if comparison < 0:
             return "Downgrade"
         if comparison > 0:
             return "Upgrade"
         return "Reinstall"
 
-    def set_ocpp_caller(self, caller: Any) -> None:
-        """Register the active ChargePointSession so commands can be sent."""
-        self._ocpp_caller = caller
+    def register_ocpp_caller(self, charge_point_id: str | None, caller: Any) -> None:
+        charge_point_id = str(charge_point_id or "").strip()
+        if not charge_point_id:
+            return
+        self._ocpp_callers[charge_point_id] = caller
 
-    async def _ocpp_call(self, action: str, payload: dict[str, Any], timeout: int = 20) -> dict[str, Any]:
-        caller = getattr(self, "_ocpp_caller", None)
+    def unregister_ocpp_caller(self, charge_point_id: str | None, caller: Any | None = None) -> None:
+        charge_point_id = str(charge_point_id or "").strip()
+        if not charge_point_id:
+            return
+        existing = self._ocpp_callers.get(charge_point_id)
+        if caller is None or existing is caller:
+            self._ocpp_callers.pop(charge_point_id, None)
+
+    def set_charge_point_command_authorizer(
+        self,
+        authorizer: Callable[[str | None], bool] | None,
+    ) -> None:
+        """Register a policy callback for outbound OCPP commands."""
+        self._charge_point_command_authorizer = authorizer
+
+    def charge_point_can_receive_commands(self, charge_point_id: str | None) -> bool:
+        if self._charge_point_command_authorizer is None:
+            return True
+        return bool(self._charge_point_command_authorizer(charge_point_id))
+
+    async def _ocpp_call(
+        self,
+        action: str,
+        payload: dict[str, Any],
+        timeout: int = 20,
+        charge_point_id: str | None = None,
+    ) -> dict[str, Any]:
+        target_charge_point_id = charge_point_id
+        target_key = str(target_charge_point_id or "").strip()
+        if not target_key:
+            raise RuntimeError("A charge point identity is required")
+        caller = self._ocpp_callers.get(target_key)
         if caller is None:
             raise RuntimeError("No charger connected")
+        if not self.charge_point_can_receive_commands(target_charge_point_id):
+            raise RuntimeError("Charger is not adopted")
         return await caller.async_call(action, payload, timeout=timeout)
 
-    async def async_record_firmware_status(self, payload: dict[str, Any]) -> None:
+    async def async_record_firmware_status(self, charge_point_id: str | None, payload: dict[str, Any]) -> None:
         status = payload.get("status")
-        self.data.firmware_status = status
-        if status in {"Downloading", "Downloaded", "Installing", "Installed"}:
-            self.data.firmware_update_state = status
-        elif status:
-            self.data.firmware_update_state = "Failed"
-            self.data.firmware_update_failure_reason = str(status)
-        if status == "Installed":
-            self.data.firmware_update_completed_at = datetime.now(UTC)
-            self.data.firmware_update_failure_reason = None
+        if not self._is_selected_charge_point(charge_point_id):
+            state = self.state_for_charge_point(charge_point_id)
+            state.last_seen = datetime.now(UTC)
+            self._apply_firmware_ocpp_status(state, status)
+            self._persist_charge_point_state(
+                charge_point_id,
+                state,
+                persist=True,
+                notify=True,
+            )
+            _LOGGER.info("FirmwareStatusNotification charger=%s: %s", charge_point_id, status)
+            return
+        self._apply_firmware_ocpp_status(self.data, status)
         _LOGGER.info("FirmwareStatusNotification: %s", status)
-        self._notify(persist=status in {"Installed", "Failed"})
+        self._save_active_charger_snapshot()
+        self._notify(persist=self.data.firmware_update_state in {"Installed", "Failed"})
 
-    async def async_record_diagnostics_status(self, payload: dict[str, Any]) -> None:
-        _LOGGER.info("DiagnosticsStatusNotification: %s", payload.get("status"))
+    async def async_record_diagnostics_status(self, charge_point_id: str | None, payload: dict[str, Any]) -> None:
+        _LOGGER.info("DiagnosticsStatusNotification charger=%s: %s", charge_point_id, payload.get("status"))
 
     # ── OCPP frame logging ───────────────────────────────────────────────
 
@@ -1369,45 +2719,77 @@ class OcppCoordinator:
         detail: str,
         response: Any = "Success",
         success: bool = True,
+        charge_point_id: str | None = None,
+        user: str = "You",
+        via: str = "Portal",
     ) -> None:
         """Record a user-visible portal action for the Settings -> Logs view."""
+        state = self.state_for_charge_point(charge_point_id)
         entry = {
             "ts": datetime.now(UTC).isoformat(),
-            "user": "You",
+            "user": user,
             "action": action,
             "detail": detail,
             "response": _log_response(response),
             "success": bool(success),
-            "via": "Portal",
+            "via": via,
         }
-        self.data.action_log.append(entry)
-        if len(self.data.action_log) > MAX_STORED_ACTION_LOGS:
-            self.data.action_log = self.data.action_log[-MAX_STORED_ACTION_LOGS:]
-        self._notify(persist=True)
+        state.action_log.append(entry)
+        if len(state.action_log) > MAX_STORED_ACTION_LOGS:
+            state.action_log = state.action_log[-MAX_STORED_ACTION_LOGS:]
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
 
-    def clear_action_log(self) -> int:
+    def clear_action_log(self, charge_point_id: str | None = None) -> int:
         """Clear the persisted portal action log."""
-        count = len(self.data.action_log)
-        self.data.action_log = []
-        self._notify(persist=True)
+        state = self.state_for_charge_point(charge_point_id)
+        count = len(state.action_log)
+        state.action_log = []
+        self._persist_charge_point_state(charge_point_id, state, persist=True)
         return count
 
     def record_ocpp_frame(self, **kwargs: Any) -> None:
         entry = {"ts": datetime.now(UTC).isoformat(), **kwargs}
-        self.data.ocpp_frame_history.append(entry)
-        if len(self.data.ocpp_frame_history) > MAX_STORED_OCPP_FRAMES:
-            self.data.ocpp_frame_history.pop(0)
+        charge_point_id = kwargs.get("charge_point_id")
+        state = self.state_for_charge_point(charge_point_id)
+        state.ocpp_frame_history.append(entry)
+        if len(state.ocpp_frame_history) > MAX_STORED_OCPP_FRAMES:
+            state.ocpp_frame_history = state.ocpp_frame_history[-MAX_STORED_OCPP_FRAMES:]
+        self._persist_charge_point_state(charge_point_id, state, persist=True, notify=False)
 
     def record_unsupported_ocpp_action(self, action: str, payload: Any) -> None:
         _LOGGER.warning("Unsupported OCPP action: %s payload=%s", action, payload)
 
-    def record_authorize_exchange(self, req: Any, resp: Any) -> None:
+    def record_authorize_exchange(
+        self,
+        req: Any,
+        resp: Any,
+        *,
+        charge_point_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        del req, resp, charge_point_id, session_id
         pass
 
-    def record_start_transaction_exchange(self, req: Any, resp: Any) -> None:
+    def record_start_transaction_exchange(
+        self,
+        req: Any,
+        resp: Any,
+        *,
+        charge_point_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        del req, resp, charge_point_id, session_id
         pass
 
-    def record_stop_transaction_exchange(self, req: Any, resp: Any) -> None:
+    def record_stop_transaction_exchange(
+        self,
+        req: Any,
+        resp: Any,
+        *,
+        charge_point_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        del req, resp, charge_point_id, session_id
         pass
 
     def record_call_error(self, **kwargs: Any) -> None:
@@ -1465,6 +2847,13 @@ def _compare_firmware_versions(target: Any, current: Any) -> int:
     target_key = target_key + (0,) * (width - len(target_key))
     current_key = current_key + (0,) * (width - len(current_key))
     return (target_key > current_key) - (target_key < current_key)
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _is_car_plugged_in_status(status: str | None) -> bool | None:
@@ -1530,6 +2919,7 @@ def _parse_ocpp_ts(value: Any) -> datetime | None:
 
 
 SCHEDULE_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+SCHEDULE_DAY_INDEX = {day.lower(): index for index, day in enumerate(SCHEDULE_DAYS)}
 
 
 def _next_schedule_id(existing: dict[str, dict[str, Any]]) -> str:
@@ -1587,6 +2977,146 @@ def _normalise_schedule_list(schedules: Any) -> list[dict[str, Any]]:
     return normalised
 
 
+def _schedule_with_ocpp_response(
+    schedule: dict[str, Any] | None, response: dict[str, Any] | None
+) -> dict[str, Any]:
+    result = dict(schedule or {})
+    if response is not None:
+        result["_ocpp_response"] = response
+    return result
+
+
+def _build_charging_schedule_payload(schedule: dict[str, Any]) -> dict[str, Any]:
+    days = [
+        str(day).lower()
+        for day in schedule.get("days", [])
+        if str(day).lower() in SCHEDULE_DAY_INDEX
+    ]
+    all_days_selected = not days or set(days) == set(SCHEDULE_DAY_INDEX)
+    if all_days_selected:
+        days = [day.lower() for day in SCHEDULE_DAYS]
+
+    start_hours, start_minutes = _split_hhmm(schedule.get("start") or "00:00")
+    end_hours, end_minutes = _split_hhmm(schedule.get("end") or "01:00")
+    start_secs = _local_hhmm_to_utc_secs(start_hours, start_minutes)
+    end_secs = _local_hhmm_to_utc_secs(end_hours, end_minutes)
+    limit_a = max(6, min(32, _coerce_int(schedule.get("current_a")) or 32))
+
+    if all_days_selected:
+        recurrency = "Daily"
+        cycle_seconds = 86400
+        anchor = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        intervals = _schedule_intervals_for_day(start_secs, end_secs, cycle_seconds)
+    else:
+        recurrency = "Weekly"
+        cycle_seconds = 604800
+        now_utc = datetime.now(UTC)
+        days_since_monday = now_utc.weekday()
+        anchor = (now_utc - timedelta(days=days_since_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        intervals: list[tuple[int, int]] = []
+        for day in sorted(set(days), key=lambda value: SCHEDULE_DAY_INDEX[value]):
+            base = SCHEDULE_DAY_INDEX[day] * 86400
+            intervals.extend(_schedule_intervals_for_day(base + start_secs, base + end_secs, cycle_seconds))
+
+    periods = _schedule_periods_from_intervals(intervals, cycle_seconds, limit_a)
+    profile = {
+        "stackLevel": 0,
+        "chargingProfilePurpose": "TxDefaultProfile",
+        "chargingProfileKind": "Recurring",
+        "recurrencyKind": recurrency,
+        "chargingSchedule": {
+            "chargingRateUnit": "A",
+            "startSchedule": anchor.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "chargingSchedulePeriod": [
+                {"startPeriod": str(start), "limit": str(limit)}
+                for start, limit in periods
+            ],
+        },
+        "chargingProfileId": 1,
+    }
+    return {"connectorId": 0, "csChargingProfiles": profile}
+
+
+def _schedule_intervals_for_day(start: int, end: int, cycle_seconds: int) -> list[tuple[int, int]]:
+    if end <= start:
+        end += 86400
+
+    intervals: list[tuple[int, int]] = []
+    if start >= cycle_seconds:
+        start -= cycle_seconds
+        end -= cycle_seconds
+    if end > cycle_seconds:
+        intervals.append((start, cycle_seconds))
+        intervals.append((0, end - cycle_seconds))
+    else:
+        intervals.append((start, end))
+    return [
+        (max(0, min(cycle_seconds, interval_start)), max(0, min(cycle_seconds, interval_end)))
+        for interval_start, interval_end in intervals
+        if interval_end > interval_start
+    ]
+
+
+def _schedule_periods_from_intervals(
+    intervals: list[tuple[int, int]], cycle_seconds: int, limit_a: int
+) -> list[tuple[int, int]]:
+    if not intervals:
+        return [(0, 0)]
+
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+
+    periods: list[tuple[int, int]] = []
+    if merged[0][0] > 0:
+        periods.append((0, 0))
+    for start, end in merged:
+        if start > 0:
+            periods.append((start, limit_a))
+        elif not periods:
+            periods.append((0, limit_a))
+        if end < cycle_seconds:
+            periods.append((end, 0))
+
+    deduped: list[tuple[int, int]] = []
+    for start, limit in sorted(periods):
+        if deduped and deduped[-1][0] == start:
+            deduped[-1] = (start, limit)
+        elif deduped and deduped[-1][1] == limit:
+            continue
+        else:
+            deduped.append((start, limit))
+    return deduped or [(0, 0)]
+
+
+def _split_hhmm(value: Any) -> tuple[int, int]:
+    normalised = _normalise_time(value)
+    hours, minutes = normalised.split(":", 1)
+    return int(hours), int(minutes)
+
+
+def _local_hhmm_to_utc_secs(hours: int, minutes: int) -> int:
+    local_tz = datetime.now().astimezone().tzinfo or UTC
+    local_dt = datetime.now(local_tz).replace(
+        hour=hours, minute=minutes, second=0, microsecond=0
+    )
+    utc_dt = local_dt.astimezone(UTC)
+    return utc_dt.hour * 3600 + utc_dt.minute * 60
+
+
+def _require_ocpp_status(action: str, result: dict[str, Any], accepted: set[str]) -> None:
+    status = str(result.get("status") or "").strip()
+    if status in accepted:
+        return
+    response = json.dumps(result, default=str, separators=(",", ":"))
+    raise RuntimeError(f"{action} returned {response}")
+
+
 def _normalise_time(value: Any) -> str:
     match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value).strip())
     if not match:
@@ -1608,6 +3138,57 @@ def _normalise_rfid_tag(tag: dict[str, Any]) -> dict[str, Any]:
         "expires_at": expires_at or None,
         "enabled": bool(tag.get("enabled", True)),
     }
+
+
+def _tag_with_ocpp_response(
+    tag: dict[str, Any] | None, response: dict[str, Any] | None
+) -> dict[str, Any]:
+    result = dict(tag or {})
+    if response is not None:
+        result["_ocpp_response"] = response
+    return result
+
+
+def _rfid_tag_requires_ocpp_update(
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+    original_id_tag: str,
+) -> bool:
+    if previous is None:
+        return True
+    if original_id_tag and previous["id_tag"].casefold() != current["id_tag"].casefold():
+        return True
+    return (
+        bool(previous.get("enabled", True)) != bool(current.get("enabled", True))
+        or str(previous.get("expires_at") or "") != str(current.get("expires_at") or "")
+    )
+
+
+def _rfid_tag_local_authorization_entry(tag: dict[str, Any]) -> dict[str, Any]:
+    id_tag_info: dict[str, Any] = {
+        "status": "Accepted" if tag.get("enabled", True) else "Blocked"
+    }
+    expiry_date = _normalise_ocpp_datetime(tag.get("expires_at"))
+    if expiry_date:
+        id_tag_info["expiryDate"] = expiry_date
+    return {
+        "idTag": str(tag.get("id_tag") or ""),
+        "idTagInfo": id_tag_info,
+    }
+
+
+def _normalise_ocpp_datetime(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if parsed.tzinfo is None:
+        local_tz = datetime.now().astimezone().tzinfo or UTC
+        parsed = parsed.replace(tzinfo=local_tz)
+    return parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _normalise_rfid_tag_list(tags: Any) -> list[dict[str, Any]]:
@@ -1641,6 +3222,42 @@ def _log_response(response: Any) -> Any:
         return str(response)
 
 
+_STATE_DATETIME_FIELDS = {
+    "firmware_update_started_at",
+    "firmware_update_download_completed_at",
+    "firmware_update_install_started_at",
+    "firmware_update_expected_reconnect_by",
+    "firmware_update_completed_at",
+    "firmware_manifest_refreshed_at",
+    "last_seen",
+    "last_heartbeat",
+    "transaction_started_at",
+    "transaction_ended_at",
+}
+
+
+def _state_from_snapshot(snapshot: dict[str, Any]) -> ChargerState:
+    state = ChargerState()
+    _apply_snapshot_to_state(state, snapshot)
+    return state
+
+
+def _apply_snapshot_to_state(state: ChargerState, snapshot: dict[str, Any]) -> None:
+    for field_name in ChargerState.__dataclass_fields__:
+        if field_name not in snapshot:
+            continue
+        value = snapshot[field_name]
+        if field_name in _STATE_DATETIME_FIELDS and isinstance(value, str) and value:
+            value = _parse_ocpp_ts(value)
+        try:
+            setattr(state, field_name, value)
+        except (AttributeError, TypeError, ValueError):
+            continue
+    state.charging_schedule = _normalise_schedule_list(state.charging_schedule)
+    state.rfid_tags = _normalise_rfid_tag_list(state.rfid_tags)
+    state.transaction_active = _is_charging_status(state.status)
+
+
 def _state_to_dict(s: ChargerState) -> dict[str, Any]:
     """Serialize the fields the UI cares about to a JSON-safe dict."""
     return {
@@ -1656,15 +3273,29 @@ def _state_to_dict(s: ChargerState) -> dict[str, Any]:
         "firmware_update_target_version": s.firmware_update_target_version,
         "firmware_update_previous_version": s.firmware_update_previous_version,
         "firmware_update_started_at": s.firmware_update_started_at.isoformat() if s.firmware_update_started_at else None,
+        "firmware_update_download_completed_at": s.firmware_update_download_completed_at.isoformat() if s.firmware_update_download_completed_at else None,
+        "firmware_update_install_started_at": s.firmware_update_install_started_at.isoformat() if s.firmware_update_install_started_at else None,
+        "firmware_update_expected_reconnect_by": s.firmware_update_expected_reconnect_by.isoformat() if s.firmware_update_expected_reconnect_by else None,
         "firmware_update_completed_at": s.firmware_update_completed_at.isoformat() if s.firmware_update_completed_at else None,
         "firmware_update_failure_reason": s.firmware_update_failure_reason,
+        "firmware_server_host": s.firmware_server_host,
         "firmware_manifest_error": s.firmware_manifest_error,
         "firmware_manifest_refreshed_at": s.firmware_manifest_refreshed_at.isoformat() if s.firmware_manifest_refreshed_at else None,
+        "firmware_manifest_entries": s.firmware_manifest_entries,
         "selected_firmware_file": s.selected_firmware_file,
+        "available_firmware_files": s.available_firmware_files,
+        "last_update_firmware_request": s.last_update_firmware_request,
+        "firmware_transfer_progress": s.firmware_transfer_progress,
         "charge_point_serial_number": s.charge_point_serial_number,
+        "charge_box_serial_number": s.charge_box_serial_number,
+        "websocket_remote_address": s.websocket_remote_address,
         "local_ip_address": s.local_ip_address,
         "status": s.status,
         "error_code": s.error_code,
+        "vendor_error_code": s.vendor_error_code,
+        "last_boot_notification": s.last_boot_notification,
+        "last_status_notification": s.last_status_notification,
+        "last_meter_values": s.last_meter_values,
         "car_plugged_in": s.car_plugged_in,
         "transaction_active": _is_charging_status(s.status),
         "transaction_open": s.transaction_id is not None and s.transaction_ended_at is None,
@@ -1698,4 +3329,5 @@ def _state_to_dict(s: ChargerState) -> dict[str, Any]:
         "charging_schedule": s.charging_schedule,
         "rfid_tags": s.rfid_tags,
         "action_log": s.action_log,
+        "ocpp_frame_history": s.ocpp_frame_history,
     }

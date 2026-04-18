@@ -9,18 +9,26 @@ services:
     container_name: givevc-ocppv2
     restart: unless-stopped
     ports:
-      - "${OCPP_PORT:-7655}:7655"       # OCPP WebSocket — charger connects here
-      - "${FIRMWARE_PORT:-9688}:9688"   # Firmware transfer server
-      - "${WEB_PORT:-8099}:8099"        # Web UI
+      - "${OCPP_BIND:-0.0.0.0}:${OCPP_PORT:-7655}:7655"       # OCPP WebSocket — charger connects here
+      - "${FIRMWARE_BIND:-0.0.0.0}:${FIRMWARE_PORT:-9688}:9688"   # Firmware transfer server
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8099}:8099"        # Web UI — Caddy terminates TLS externally
     environment:
       OCPP_PORT: "7655"
       FIRMWARE_PORT: "9688"
       INGRESS_PORT: "8099"
-      ADOPT_FIRST_CHARGER: "${ADOPT_FIRST_CHARGER:-true}"
-      EXPECTED_CHARGE_POINT_ID: "${EXPECTED_CHARGE_POINT_ID:-}"
+      TZ: "${TZ:-Europe/London}"
       DEBUG_LOGGING: "${DEBUG_LOGGING:-false}"
       FIRMWARE_ROOT: "/data/firmware"
       FIRMWARE_MANIFEST_URL: "${FIRMWARE_MANIFEST_URL:-https://raw.githubusercontent.com/DJBenson/giv-firmware/refs/heads/main/Firmware/EVC/manifest.json}"
+      PUBLIC_OCPP_BASE_URL: "${PUBLIC_OCPP_BASE_URL:-}"
+      PUBLIC_FIRMWARE_HOST: "${PUBLIC_FIRMWARE_HOST:-}"
+      PUBLIC_FIRMWARE_PORT: "${PUBLIC_FIRMWARE_PORT:-9688}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      SMTP_TLS: "${SMTP_TLS:-true}"
     volumes:
       - app-data:/data
 
