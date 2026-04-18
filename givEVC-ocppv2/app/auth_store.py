@@ -8,12 +8,14 @@ import re
 import hmac
 import json
 import os
+import random
 import secrets
 import sqlite3
 import struct
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from calendar import monthrange
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from cryptography.fernet import Fernet
@@ -25,7 +27,12 @@ SESSION_DAYS = 14
 ONBOARDING_MINUTES = 30
 EMAIL_OTP_MINUTES = 10
 EMAIL_OTP_RESEND_SECONDS = 30
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
+DEMO_EMAIL = "demo.user@givevcdemo.local"
+DEMO_PASSWORD = "p@ssw0rd123"
+DEMO_CHARGE_POINT_ID = "demo-charger-001"
+DEMO_DISPLAY_NAME = "Demo Charger"
+SYSTEM_SETTING_DEMO_MODE = "demo_mode_enabled"
 PASSWORD_RESET_MINUTES = 15
 COORDINATOR_STATE_ID = "global"
 TOTP_ISSUER = "GivEVC Portal"
@@ -43,6 +50,7 @@ class AuthUser:
     disabled_at: str | None = None
     theme_preference: str | None = None
     email_verified_at: str | None = None
+    is_demo: bool = False
 
 
 class AuthStore:
@@ -122,6 +130,9 @@ class AuthStore:
                 conn.execute("PRAGMA user_version = 16")
             if int(conn.execute("PRAGMA user_version").fetchone()[0] or 0) < 17:
                 self._migrate_meter_readings_table(conn)
+                conn.execute("PRAGMA user_version = 17")
+            if int(conn.execute("PRAGMA user_version").fetchone()[0] or 0) < 18:
+                self._migrate_is_demo_column(conn)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("PRAGMA foreign_keys = ON")
 
@@ -142,6 +153,7 @@ class AuthStore:
                 totp_enabled_at TEXT,
                 totp_pending_secret_ciphertext TEXT,
                 totp_pending_created_at TEXT,
+                is_demo INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -377,6 +389,11 @@ class AuthStore:
     def _migrate_meter_readings_table(self, conn: sqlite3.Connection) -> None:
         self._create_meter_readings_table(conn)
 
+    def _migrate_is_demo_column(self, conn: sqlite3.Connection) -> None:
+        cols = _table_columns(conn, "users")
+        if "is_demo" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
+
     def _create_system_settings_table(self, conn: sqlite3.Connection) -> None:
         conn.executescript(
             """
@@ -603,7 +620,7 @@ class AuthStore:
             row = conn.execute(
                 """
                 SELECT id, email, password_hash, display_name, role, disabled_at, theme_preference,
-                       email_verified_at, totp_enabled_at
+                       email_verified_at, totp_enabled_at, is_demo
                 FROM users
                 WHERE email = ?
                 """,
@@ -707,7 +724,7 @@ class AuthStore:
             row = conn.execute(
                 """
                 SELECT id, email, display_name, role, disabled_at, theme_preference,
-                       email_verified_at, totp_enabled_at
+                       email_verified_at, totp_enabled_at, is_demo
                 FROM users
                 WHERE email = ?
                 """,
@@ -743,7 +760,7 @@ class AuthStore:
             verified = conn.execute(
                 """
                 SELECT id, email, display_name, role, disabled_at, theme_preference,
-                       email_verified_at, totp_enabled_at
+                       email_verified_at, totp_enabled_at, is_demo
                 FROM users
                 WHERE id = ?
                 """,
@@ -1037,7 +1054,7 @@ class AuthStore:
             row = conn.execute(
                 """
                 SELECT id, email, password_hash, display_name, role, disabled_at, theme_preference,
-                       email_verified_at, totp_enabled_at
+                       email_verified_at, totp_enabled_at, is_demo
                 FROM users
                 WHERE id = ?
                 """,
@@ -1081,7 +1098,7 @@ class AuthStore:
             row = conn.execute(
                 """
                 SELECT u.id, u.email, u.display_name, u.role, u.disabled_at, u.theme_preference,
-                       u.email_verified_at, u.totp_enabled_at
+                       u.email_verified_at, u.totp_enabled_at, u.is_demo
                 FROM sessions s
                 JOIN users u ON u.id = s.user_id
                 WHERE s.id = ? AND s.expires_at > ? AND u.disabled_at IS NULL
@@ -1109,7 +1126,7 @@ class AuthStore:
             row = conn.execute(
                 """
                 SELECT id, email, password_hash, display_name, role, disabled_at, theme_preference,
-                       email_verified_at, totp_enabled_at
+                       email_verified_at, totp_enabled_at, is_demo
                 FROM users
                 WHERE id = ?
                 """,
@@ -1208,6 +1225,13 @@ class AuthStore:
             ):
                 user_id = row["user_id"]
                 session_id = row["id"]
+                # Refuse to adopt a charger into the demo account
+                with self._connect() as conn:
+                    u = conn.execute(
+                        "SELECT is_demo FROM users WHERE id = ?", (user_id,)
+                    ).fetchone()
+                if u and u["is_demo"]:
+                    return None
                 # Consume the session first so reconnects don't hit it again
                 with self._connect() as conn:
                     conn.execute(
@@ -1255,6 +1279,104 @@ class AuthStore:
                 (session_id, charge_point_id, started_by, meter_start, started_at, _now()),
             )
         return session_id
+
+    def seed_sample_charging_sessions(
+        self,
+        charge_point_id: str = "1234567890",
+        *,
+        days: int = 92,
+        max_daily_kwh: float = 40.0,
+    ) -> int:
+        """Create realistic demo energy history if the charger has no sessions."""
+        charge_point_id = str(charge_point_id or "").strip()
+        if not charge_point_id:
+            return 0
+
+        today = datetime.now().date()
+        rng = random.Random(f"sample-energy:{charge_point_id}:{today.isoformat()}:v1")
+        now = _now()
+        rows: list[tuple[Any, ...]] = []
+        meter_wh = 8_000_000.0
+
+        for offset in range(days - 1, -1, -1):
+            session_date = today - timedelta(days=offset)
+            weekend = session_date.weekday() >= 5
+            skip_chance = 0.46 if weekend else 0.34
+            if rng.random() < skip_chance:
+                continue
+
+            if rng.random() < 0.12:
+                kwh = rng.uniform(28.0, max_daily_kwh)
+            elif weekend:
+                kwh = rng.uniform(8.0, 30.0)
+            else:
+                kwh = rng.uniform(4.0, 22.0)
+            kwh = round(min(max_daily_kwh, max(1.2, kwh)), 2)
+
+            start_hour = rng.choice((6, 7, 8, 17, 18, 19, 20))
+            start_minute = rng.choice((0, 5, 10, 15, 20, 30, 45))
+            started_at_dt = datetime(
+                session_date.year,
+                session_date.month,
+                session_date.day,
+                start_hour,
+                start_minute,
+                tzinfo=UTC,
+            )
+            duration_minutes = int(max(25, min(520, round((kwh / rng.uniform(6.0, 7.4)) * 60))))
+            stopped_at_dt = started_at_dt + timedelta(minutes=duration_minutes)
+
+            meter_start = round(meter_wh, 3)
+            meter_stop = round(meter_start + (kwh * 1000.0), 3)
+            meter_wh = meter_stop + rng.uniform(0.0, 5.0)
+
+            rows.append((
+                f"sample-{charge_point_id}-{session_date.isoformat()}",
+                charge_point_id,
+                "sample_seed",
+                meter_start,
+                started_at_dt.isoformat(),
+                "sample_seed",
+                meter_stop,
+                stopped_at_dt.isoformat(),
+                "Sample data",
+                now,
+            ))
+
+        if not rows:
+            return 0
+
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM charging_sessions
+                WHERE charge_point_id = ?
+                  AND stopped_at IS NOT NULL
+                  AND meter_start IS NOT NULL
+                  AND meter_stop IS NOT NULL
+                """,
+                (charge_point_id,),
+            ).fetchone()[0]
+            if existing:
+                return 0
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO charging_sessions
+                    (id, charge_point_id, started_by, meter_start, started_at,
+                     stopped_by, meter_stop, stopped_at, stop_reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            return conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM charging_sessions
+                WHERE charge_point_id = ? AND started_by = 'sample_seed'
+                """,
+                (charge_point_id,),
+            ).fetchone()[0]
 
     def record_session_stop(
         self,
@@ -1304,9 +1426,21 @@ class AuthStore:
                 """,
                 (charge_point_id,),
             ).fetchone()
+            month_row = conn.execute(
+                """
+                SELECT SUM(meter_stop - meter_start) / 1000.0 AS kwh
+                FROM charging_sessions
+                WHERE charge_point_id = ? AND stopped_at IS NOT NULL
+                  AND meter_stop IS NOT NULL AND meter_start IS NOT NULL
+                  AND DATE(started_at) >= DATE('now', 'start of month')
+                  AND DATE(started_at) < DATE('now', 'start of month', '+1 month')
+                """,
+                (charge_point_id,),
+            ).fetchone()
         return {
             "last_session_kwh": round(last_row["kwh"], 3) if last_row and last_row["kwh"] is not None else None,
             "today_kwh": round(today_row["kwh"], 3) if today_row and today_row["kwh"] is not None else None,
+            "month_kwh": round(month_row["kwh"], 3) if month_row and month_row["kwh"] is not None else None,
         }
 
     def list_charging_sessions(
@@ -1347,6 +1481,98 @@ class AuthStore:
                 [*params, per_page, offset],
             ).fetchall()
         return [dict(r) for r in rows], total
+
+    def get_energy_buckets(
+        self,
+        user_id: str,
+        charge_point_id: str,
+        period: str = "daily",
+        anchor_date: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self.get_charger_for_user(user_id, charge_point_id) is None:
+            return None
+
+        period = str(period or "daily").strip().lower()
+        if period not in {"daily", "weekly", "monthly"}:
+            period = "daily"
+        anchor = _parse_date_only(anchor_date) or datetime.now().date()
+
+        tick_labels: list[str] | None = None
+        if period == "weekly":
+            range_start = anchor - timedelta(days=anchor.weekday())
+            range_end = range_start + timedelta(days=7)
+            labels = [(range_start + timedelta(days=i)).strftime("%a %-d %b %y") for i in range(7)]
+            tick_labels = [(range_start + timedelta(days=i)).strftime("%a %d") for i in range(7)]
+            buckets = [0.0 for _ in labels]
+        elif period == "monthly":
+            range_start = anchor.replace(day=1)
+            days = monthrange(anchor.year, anchor.month)[1]
+            range_end = range_start + timedelta(days=days)
+            labels = [(range_start + timedelta(days=i)).strftime("%-d %b %y") for i in range(days)]
+            tick_labels = [str(i) for i in range(1, days + 1)]
+            buckets = [0.0 for _ in labels]
+        else:
+            range_start = anchor
+            range_end = range_start + timedelta(days=1)
+            labels = [f"{hour:02d}:00" for hour in range(24)]
+            buckets = [0.0 for _ in labels]
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT meter_start, meter_stop, started_at, stopped_at
+                FROM charging_sessions
+                WHERE charge_point_id = ?
+                  AND stopped_at IS NOT NULL
+                  AND meter_start IS NOT NULL
+                  AND meter_stop IS NOT NULL
+                  AND stopped_at >= ?
+                  AND stopped_at < ?
+                ORDER BY stopped_at ASC
+                """,
+                (
+                    charge_point_id,
+                    f"{(range_start - timedelta(days=1)).isoformat()}T00:00:00",
+                    f"{(range_end + timedelta(days=1)).isoformat()}T00:00:00",
+                ),
+            ).fetchall()
+
+        sessions: list[dict[str, Any]] = []
+        for row in rows:
+            stopped_at = _parse_datetime(row["stopped_at"])
+            if stopped_at is None:
+                continue
+            local_stopped_at = stopped_at.astimezone() if stopped_at.tzinfo else stopped_at
+            stopped_date = local_stopped_at.date()
+            if stopped_date < range_start or stopped_date >= range_end:
+                continue
+            kwh = max(0.0, (float(row["meter_stop"]) - float(row["meter_start"])) / 1000.0)
+            if period == "weekly":
+                index = (stopped_date - range_start).days
+            elif period == "monthly":
+                index = stopped_date.day - 1
+            else:
+                index = local_stopped_at.hour
+            if 0 <= index < len(buckets):
+                buckets[index] += kwh
+            sessions.append({
+                "started_at": row["started_at"],
+                "stopped_at": row["stopped_at"],
+                "kwh": round(kwh, 3),
+            })
+
+        rounded_buckets = [round(value, 3) for value in buckets]
+        return {
+            "period": period,
+            "date": anchor.isoformat(),
+            "range_start": range_start.isoformat(),
+            "range_end": range_end.isoformat(),
+            "labels": labels,
+            "tick_labels": tick_labels or labels,
+            "buckets": rounded_buckets,
+            "total_kwh": round(sum(rounded_buckets), 3),
+            "sessions": sessions,
+        }
 
     def record_meter_values(self, charge_point_id: str, flattened_samples: list[dict]) -> None:
         if not flattened_samples:
@@ -1424,6 +1650,136 @@ class AuthStore:
                 [*params, per_page, offset],
             ).fetchall()
         return [dict(r) for r in rows], total
+
+    def get_power_samples(
+        self,
+        user_id: str,
+        charge_point_id: str,
+        anchor_date: str | None = None,
+        period: str = "daily",
+    ) -> dict[str, Any] | None:
+        if self.get_charger_for_user(user_id, charge_point_id) is None:
+            return None
+
+        anchor = _parse_date_only(anchor_date) or datetime.now().date()
+        period = period if period in ("daily", "weekly", "monthly") else "daily"
+
+        if period == "weekly":
+            range_start = anchor - timedelta(days=6)
+            range_end = anchor + timedelta(days=1)
+        elif period == "monthly":
+            range_start = anchor - timedelta(days=29)
+            range_end = anchor + timedelta(days=1)
+        else:
+            range_start = anchor
+            range_end = anchor + timedelta(days=1)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT timestamp, group_index, measurand, phase, unit, normalized_value
+                FROM meter_readings
+                WHERE charge_point_id = ?
+                  AND timestamp >= ?
+                  AND timestamp < ?
+                  AND (
+                    (group_index IN (0, 1) AND measurand = 'Power.Active.Import')
+                    OR (group_index = 0 AND measurand = 'Current.Import')
+                    OR (group_index = 0 AND measurand = 'Voltage')
+                  )
+                  AND normalized_value IS NOT NULL
+                ORDER BY timestamp ASC, group_index ASC, id ASC
+                """,
+                (
+                    charge_point_id,
+                    f"{range_start.isoformat()}T00:00:00",
+                    f"{range_end.isoformat()}T00:00:00",
+                ),
+            ).fetchall()
+
+        _SAMPLE_FIELDS = ("grid_power_kw", "ev_power_kw", "ev_current_a", "ev_voltage_v")
+
+        if period == "daily":
+            samples_by_timestamp: dict[str, dict[str, Any]] = {}
+            scores_by_timestamp: dict[str, dict[str, int]] = {}
+            for row in rows:
+                parsed = _parse_datetime(row["timestamp"])
+                if parsed is None:
+                    continue
+                local_ts = parsed.astimezone() if parsed.tzinfo else parsed
+                if local_ts.date() < range_start or local_ts.date() >= range_end:
+                    continue
+                field = _power_sample_field(row["group_index"], row["measurand"])
+                if field is None:
+                    continue
+                value = _normalise_power_sample(field, row["normalized_value"])
+                if value is None:
+                    continue
+                timestamp_key = local_ts.replace(second=0, microsecond=0).isoformat()
+                sample = samples_by_timestamp.setdefault(timestamp_key, {
+                    "timestamp": timestamp_key,
+                    "label": local_ts.strftime("%H:%M"),
+                    **{f: None for f in _SAMPLE_FIELDS},
+                })
+                scores = scores_by_timestamp.setdefault(timestamp_key, {})
+                score = _power_sample_score(field, row["phase"], row["unit"])
+                if field not in scores or score >= scores[field]:
+                    sample[field] = round(value, 3 if field.endswith("_kw") else 1)
+                    scores[field] = score
+
+            samples = [samples_by_timestamp[k] for k in sorted(samples_by_timestamp)]
+
+        else:
+            # Weekly / monthly: aggregate per calendar day — peak power, mean current, mean voltage
+            accum: dict[date, dict[str, list[float]]] = {}
+            for row in rows:
+                parsed = _parse_datetime(row["timestamp"])
+                if parsed is None:
+                    continue
+                local_ts = parsed.astimezone() if parsed.tzinfo else parsed
+                d = local_ts.date()
+                if d < range_start or d >= range_end:
+                    continue
+                field = _power_sample_field(row["group_index"], row["measurand"])
+                if field is None:
+                    continue
+                value = _normalise_power_sample(field, row["normalized_value"])
+                if value is None:
+                    continue
+                bucket = accum.setdefault(d, {f: [] for f in _SAMPLE_FIELDS})
+                bucket[field].append(value)
+
+            samples = []
+            cur = range_start
+            while cur < range_end:
+                bucket = accum.get(cur, {})
+                label = cur.strftime("%-d %b") if period == "monthly" else cur.strftime("%a %-d")
+
+                def _agg(field: str, vals: list[float]) -> float | None:
+                    if not vals:
+                        return None
+                    # Peak for power; mean for current/voltage
+                    if field.endswith("_kw"):
+                        return round(max(vals), 3)
+                    return round(sum(vals) / len(vals), 1)
+
+                samples.append({
+                    "timestamp": cur.isoformat(),
+                    "label": label,
+                    **{f: _agg(f, bucket.get(f, [])) for f in _SAMPLE_FIELDS},
+                })
+                cur += timedelta(days=1)
+
+        return {
+            "date": anchor.isoformat(),
+            "period": period,
+            "labels": [s["label"] for s in samples],
+            "samples": samples,
+            "grid_power_kw": [s["grid_power_kw"] for s in samples],
+            "ev_power_kw": [s["ev_power_kw"] for s in samples],
+            "ev_current_a": [s["ev_current_a"] for s in samples],
+            "ev_voltage_v": [s["ev_voltage_v"] for s in samples],
+        }
 
     def verify_charger_password(self, charge_point_id: str, password: str) -> bool:
         """Return True if password matches, or if no password has been set (legacy adoption)."""
@@ -1571,6 +1927,19 @@ class AuthStore:
                 WHERE email = ?
                 """,
                 (_normalise_email(email),),
+            ).fetchone()
+        return _admin_user_from_row(row) if row else None
+
+    def find_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, email, display_name, role, disabled_at, email_verified_at,
+                       totp_enabled_at, is_demo, created_at, updated_at
+                FROM users
+                WHERE id = ?
+                """,
+                (str(user_id),),
             ).fetchone()
         return _admin_user_from_row(row) if row else None
 
@@ -1745,6 +2114,7 @@ class AuthStore:
                   AND k.revoked_at IS NULL
                   AND (k.expires_at IS NULL OR k.expires_at > ?)
                   AND u.disabled_at IS NULL
+                  AND u.is_demo = 0
                 """,
                 (key_hash, now),
             ).fetchone()
@@ -1845,6 +2215,395 @@ class AuthStore:
                 (charger_id,),
             ).fetchone()
         return dict(row)
+
+    def seed_demo_account(self) -> None:
+        """Drop and re-create the demo user, charger, and session history on every startup."""
+        now = _now()
+        user_id = "demo-user-00000000000000000000000000000001"
+        charger_id = "demo-charger-row-000000000000000000001"
+        password_hash = _hash_password(DEMO_PASSWORD)
+        ocpp_password_hash = _hash_secret(DEMO_PASSWORD)
+
+        with self._connect() as conn:
+            # Remove old demo data completely
+            conn.execute("DELETE FROM users WHERE is_demo = 1")
+            conn.execute(
+                "DELETE FROM charging_sessions WHERE charge_point_id = ?",
+                (DEMO_CHARGE_POINT_ID,),
+            )
+            conn.execute(
+                "DELETE FROM meter_readings WHERE charge_point_id = ?",
+                (DEMO_CHARGE_POINT_ID,),
+            )
+            conn.execute(
+                "DELETE FROM charger_state_snapshots WHERE charge_point_id = ?",
+                (DEMO_CHARGE_POINT_ID,),
+            )
+            tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "portal_actions" in tables:
+                conn.execute(
+                    "DELETE FROM portal_actions WHERE charge_point_id = ?",
+                    (DEMO_CHARGE_POINT_ID,),
+                )
+
+            # Insert demo user (pre-verified, no 2FA, not admin)
+            conn.execute(
+                """
+                INSERT INTO users
+                    (id, email, password_hash, display_name, role, is_demo,
+                     email_verified_at, created_at, updated_at)
+                VALUES (?, ?, ?, 'Demo User', 'User', 1, ?, ?, ?)
+                """,
+                (user_id, DEMO_EMAIL, password_hash, now, now, now),
+            )
+
+            # Insert demo charger pre-assigned to demo user
+            conn.execute(
+                """
+                INSERT INTO chargers
+                    (id, user_id, charge_point_id, display_name, ocpp_password_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (charger_id, user_id, DEMO_CHARGE_POINT_ID, DEMO_DISPLAY_NAME, ocpp_password_hash, now),
+            )
+            conn.execute(
+                "UPDATE users SET active_charger_id = ? WHERE id = ?",
+                (charger_id, user_id),
+            )
+
+        # Seed historical sessions and meter readings
+        self._seed_demo_sessions()
+        self._seed_demo_meter_readings()
+        self._seed_demo_coordinator_state()
+
+    def _seed_demo_sessions(self) -> None:
+        """Generate 92 days of realistic charging history for the demo charger."""
+        today = datetime.now().date()
+        rng = random.Random(f"demo-energy:{DEMO_CHARGE_POINT_ID}:{today.isoformat()}:v1")
+        now = _now()
+        rows: list[tuple] = []
+        meter_wh = 8_000_000.0
+
+        for offset in range(91, -1, -1):
+            session_date = today - timedelta(days=offset)
+            weekend = session_date.weekday() >= 5
+            skip_chance = 0.46 if weekend else 0.34
+            if rng.random() < skip_chance:
+                continue
+
+            if rng.random() < 0.12:
+                kwh = rng.uniform(28.0, 40.0)
+            elif weekend:
+                kwh = rng.uniform(8.0, 30.0)
+            else:
+                kwh = rng.uniform(4.0, 22.0)
+            kwh = round(min(40.0, max(1.2, kwh)), 2)
+
+            start_hour = rng.choice((6, 7, 8, 17, 18, 19, 20))
+            start_minute = rng.choice((0, 5, 10, 15, 20, 30, 45))
+            started_at_dt = datetime(
+                session_date.year, session_date.month, session_date.day,
+                start_hour, start_minute, tzinfo=UTC,
+            )
+            duration_minutes = int(max(25, min(520, round((kwh / rng.uniform(6.0, 7.4)) * 60))))
+            stopped_at_dt = started_at_dt + timedelta(minutes=duration_minutes)
+
+            meter_start = round(meter_wh, 3)
+            meter_stop = round(meter_start + (kwh * 1000.0), 3)
+            meter_wh = meter_stop + rng.uniform(0.0, 5.0)
+
+            rows.append((
+                f"demo-{DEMO_CHARGE_POINT_ID}-{session_date.isoformat()}",
+                DEMO_CHARGE_POINT_ID,
+                "demo_seed",
+                meter_start,
+                started_at_dt.isoformat(),
+                "demo_seed",
+                meter_stop,
+                stopped_at_dt.isoformat(),
+                "Demo data",
+                now,
+            ))
+
+        if rows:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO charging_sessions
+                        (id, charge_point_id, started_by, meter_start, started_at,
+                         stopped_by, meter_stop, stopped_at, stop_reason, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+
+    def _seed_demo_meter_readings(self) -> None:
+        """Generate 30 days of 5-minute meter readings for groups 0 (EV charger) and 1 (grid).
+
+        Group 0 carries power/current/energy only when a charging session is active.
+        Group 1 represents the whole-house grid connection — always has a baseline house load,
+        plus the EV charger load on top, so its energy register is always >= group 0's.
+        """
+        today = datetime.now(UTC).date()
+        rng = random.Random(f"demo-meter:{DEMO_CHARGE_POINT_ID}:{today.isoformat()}:v1")
+        now = _now()
+        sample_interval_minutes = 5
+        voltage_v = 230.0
+
+        # Fetch the sessions seeded for the past 30 days so we can align charging windows.
+        cutoff = datetime.combine(today - timedelta(days=30), datetime.min.time()).replace(tzinfo=UTC)
+        with self._connect() as conn:
+            session_rows = conn.execute(
+                """
+                SELECT started_at, stopped_at, meter_start, meter_stop
+                FROM charging_sessions
+                WHERE charge_point_id = ? AND stopped_at IS NOT NULL
+                  AND started_at >= ?
+                ORDER BY started_at
+                """,
+                (DEMO_CHARGE_POINT_ID, cutoff.isoformat()),
+            ).fetchall()
+
+        # Build a lookup: for each 5-min timestamp, is a session active and what power?
+        sessions: list[tuple[datetime, datetime, float]] = []
+        for row in session_rows:
+            try:
+                started = _parse_datetime(row["started_at"])
+                stopped = _parse_datetime(row["stopped_at"])
+                kwh = max(0.0, (float(row["meter_stop"]) - float(row["meter_start"])) / 1000.0)
+                duration_h = (stopped - started).total_seconds() / 3600.0
+                avg_power_w = (kwh * 1000.0 / duration_h) if duration_h > 0 else 0.0
+                sessions.append((started, stopped, avg_power_w))
+            except Exception:
+                continue
+
+        def _ev_power_at(ts: datetime) -> float:
+            for started, stopped, power_w in sessions:
+                if started <= ts < stopped:
+                    return power_w
+            return 0.0
+
+        rows: list[tuple] = []
+        # Cumulative energy registers (Wh) — start at realistic lifetime totals
+        ev_total_wh = 8_000_000.0       # EV charger lifetime register
+        grid_total_wh = 42_000_000.0    # Grid meter lifetime register (much larger)
+
+        start_dt = cutoff
+        end_dt = datetime.combine(today + timedelta(days=1), datetime.min.time()).replace(tzinfo=UTC)
+        ts = start_dt
+
+        while ts < end_dt:
+            ts_str = ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            interval_h = sample_interval_minutes / 60.0
+
+            ev_power_w = _ev_power_at(ts)
+            # Add a small per-sample jitter to power (±5%)
+            if ev_power_w > 0:
+                ev_power_w = round(ev_power_w * rng.uniform(0.95, 1.05), 1)
+            ev_current_a = round(ev_power_w / voltage_v, 2) if ev_power_w > 0 else 0.0
+            ev_delta_wh = ev_power_w * interval_h
+            ev_total_wh += ev_delta_wh
+
+            # House baseline: 200–600 W with slow variation
+            house_power_w = round(rng.uniform(200.0, 600.0), 1)
+            grid_power_w = round(house_power_w + ev_power_w, 1)
+            grid_current_a = round(grid_power_w / voltage_v, 2)
+            grid_delta_wh = grid_power_w * interval_h
+            grid_total_wh += grid_delta_wh
+
+            context = "Sample.Periodic"
+
+            # Group 0 — EV Charger
+            for measurand, phase, unit, raw, norm in (
+                ("Energy.Active.Import.Register", None,  "Wh", f"{ev_total_wh:.0f}",  ev_total_wh),
+                ("Power.Active.Import",           "L1",  "W",  f"{ev_power_w:.1f}",   ev_power_w),
+                ("Current.Import",                "L1",  "A",  f"{ev_current_a:.2f}", ev_current_a),
+                ("Voltage",                       "L1-N","V",  f"{voltage_v:.1f}",    voltage_v),
+            ):
+                rows.append((
+                    DEMO_CHARGE_POINT_ID, ts_str, 0,
+                    measurand, phase, unit, raw, norm, context, "Outlet", now,
+                ))
+
+            # Group 1 — Grid Meter
+            for measurand, phase, unit, raw, norm in (
+                ("Energy.Active.Import.Register", None,  "Wh", f"{grid_total_wh:.0f}",  grid_total_wh),
+                ("Power.Active.Import",           "L1",  "W",  f"{grid_power_w:.1f}",   grid_power_w),
+                ("Current.Import",                "L1",  "A",  f"{grid_current_a:.2f}", grid_current_a),
+                ("Voltage",                       "L1-N","V",  f"{voltage_v:.1f}",      voltage_v),
+            ):
+                rows.append((
+                    DEMO_CHARGE_POINT_ID, ts_str, 1,
+                    measurand, phase, unit, raw, norm, context, "Outlet", now,
+                ))
+
+            ts += timedelta(minutes=sample_interval_minutes)
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO meter_readings
+                    (charge_point_id, timestamp, group_index, measurand, phase, unit,
+                     raw_value, normalized_value, context, location, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def _seed_demo_coordinator_state(self) -> None:
+        """Inject a realistic coordinator state snapshot for the demo charger.
+
+        Seeds:
+        - Octopus Go charging schedule (daily 00:30–05:30 @ 32A, enabled)
+        - Two RFID cards with aliases
+        - Activity log entries aligned to the last few charging sessions
+        """
+        today = datetime.now(UTC).date()
+        one_month_out = (today + timedelta(days=30)).isoformat() + "T23:59:59+00:00"
+
+        rfid_tags = [
+            {
+                "id_tag": "04:A3:F2:1B:9C:DE:80",
+                "alias": "Home Fob",
+                "expires_at": None,
+                "enabled": True,
+            },
+            {
+                "id_tag": "04:7E:B8:3A:2F:11:60",
+                "alias": "Spare Key Card",
+                "expires_at": one_month_out,
+                "enabled": True,
+            },
+        ]
+
+        charging_schedule = [
+            {
+                "id": "sched-1",
+                "name": "Octopus Go",
+                "enabled": True,
+                "start": "00:30",
+                "end": "05:30",
+                "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+                "current_a": 32,
+            }
+        ]
+
+        # Fetch the most recent charging sessions to build aligned log entries
+        cutoff = datetime.combine(today - timedelta(days=14), datetime.min.time()).replace(tzinfo=UTC)
+        with self._connect() as conn:
+            session_rows = conn.execute(
+                """
+                SELECT started_at, stopped_at, meter_start, meter_stop
+                FROM charging_sessions
+                WHERE charge_point_id = ? AND stopped_at IS NOT NULL
+                  AND started_at >= ?
+                ORDER BY started_at DESC
+                LIMIT 10
+                """,
+                (DEMO_CHARGE_POINT_ID, cutoff.isoformat()),
+            ).fetchall()
+
+        action_log: list[dict[str, Any]] = []
+
+        def _ts(dt: datetime) -> str:
+            return dt.replace(microsecond=0).isoformat()
+
+        # One-off config events scattered across the past few days
+        base_dt = datetime.combine(today - timedelta(days=3), datetime.min.time()).replace(tzinfo=UTC)
+        action_log.append({
+            "ts": _ts(base_dt.replace(hour=9, minute=12)),
+            "user": "You",
+            "action": "Save Schedule",
+            "detail": "Octopus Go: daily 00:30–05:30 @ 32A",
+            "response": "Success",
+            "success": True,
+            "via": "Portal",
+        })
+        action_log.append({
+            "ts": _ts(base_dt.replace(hour=9, minute=10)),
+            "user": "You",
+            "action": "Change Charge Mode",
+            "detail": "Boost",
+            "response": "Accepted",
+            "success": True,
+            "via": "Portal",
+        })
+        action_log.append({
+            "ts": _ts((base_dt - timedelta(days=1)).replace(hour=14, minute=3)),
+            "user": "You",
+            "action": "Add RFID Tag",
+            "detail": "Home Fob added",
+            "response": "Accepted",
+            "success": True,
+            "via": "Portal",
+        })
+        action_log.append({
+            "ts": _ts((base_dt - timedelta(days=1)).replace(hour=14, minute=5)),
+            "user": "You",
+            "action": "Add RFID Tag",
+            "detail": "Spare Key Card added",
+            "response": "Accepted",
+            "success": True,
+            "via": "Portal",
+        })
+        action_log.append({
+            "ts": _ts((base_dt - timedelta(days=2)).replace(hour=11, minute=44)),
+            "user": "You",
+            "action": "Set DNO Fuse Size",
+            "detail": "80A",
+            "response": "Accepted",
+            "success": True,
+            "via": "Portal",
+        })
+
+        # Per-session start/stop log entries
+        for row in session_rows:
+            try:
+                started = _parse_datetime(row["started_at"])
+                stopped = _parse_datetime(row["stopped_at"])
+                kwh = round(max(0.0, (float(row["meter_stop"]) - float(row["meter_start"])) / 1000.0), 2)
+                action_log.append({
+                    "ts": _ts(stopped + timedelta(seconds=2)),
+                    "user": "Charger",
+                    "action": "Stop Transaction",
+                    "detail": f"Session complete — {kwh} kWh delivered",
+                    "response": "Accepted",
+                    "success": True,
+                    "via": "OCPP",
+                })
+                action_log.append({
+                    "ts": _ts(started),
+                    "user": "Charger",
+                    "action": "Start Transaction",
+                    "detail": "RFID: Home Fob",
+                    "response": "Accepted",
+                    "success": True,
+                    "via": "OCPP",
+                })
+            except Exception:
+                continue
+
+        # Sort ascending so newest is last (coordinator appends newest at end)
+        action_log.sort(key=lambda e: e["ts"])
+
+        snapshot = {
+            "charge_point_id": DEMO_CHARGE_POINT_ID,
+            "rfid_tags": rfid_tags,
+            "charging_schedule": charging_schedule,
+            "action_log": action_log,
+        }
+        self.save_coordinator_state(snapshot)
+
+    def is_demo_mode_enabled(self) -> bool:
+        val = self.get_system_setting(SYSTEM_SETTING_DEMO_MODE)
+        return str(val or "").lower() not in ("0", "false", "disabled", "off", "no")
+
+    def set_demo_mode_enabled(self, enabled: bool) -> None:
+        self.set_system_setting(SYSTEM_SETTING_DEMO_MODE, "1" if enabled else "0")
+
+    def seed_startup_data(self) -> None:
+        """Run all startup pre-seeding in one place."""
+        self.seed_demo_account()
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -2028,13 +2787,62 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _parse_date_only(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _power_sample_field(group_index: int, measurand: str) -> str | None:
+    if measurand == "Power.Active.Import" and group_index == 1:
+        return "grid_power_kw"
+    if measurand == "Power.Active.Import" and group_index == 0:
+        return "ev_power_kw"
+    if measurand == "Current.Import" and group_index == 0:
+        return "ev_current_a"
+    if measurand == "Voltage" and group_index == 0:
+        return "ev_voltage_v"
+    return None
+
+
+def _normalise_power_sample(field: str, value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if field.endswith("_kw"):
+        return numeric / 1000.0
+    # current and voltage are already in correct units (A, V)
+    return numeric
+
+
+def _power_sample_score(field: str, phase: str | None, unit: str | None) -> int:
+    if field == "ev_voltage_v":
+        preferred_phases = ("L1-N", None, "L1", "N")
+        preferred_units = ("V", None)
+    elif field == "ev_current_a":
+        preferred_phases = ("L1", None, "L1-N", "N")
+        preferred_units = ("A", None)
+    else:
+        preferred_phases = ("L1", None, "L1-N", "N")
+        preferred_units = ("W", "kW", None)
+    phase_score = len(preferred_phases) - preferred_phases.index(phase) if phase in preferred_phases else 0
+    unit_score = len(preferred_units) - preferred_units.index(unit) if unit in preferred_units else 0
+    return phase_score * 10 + unit_score
+
+
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def _user_from_row(row: sqlite3.Row) -> AuthUser:
-    theme_preference = row["theme_preference"] if "theme_preference" in row.keys() else None
-    email_verified_at = row["email_verified_at"] if "email_verified_at" in row.keys() else None
+    keys = row.keys()
+    theme_preference = row["theme_preference"] if "theme_preference" in keys else None
+    email_verified_at = row["email_verified_at"] if "email_verified_at" in keys else None
+    is_demo = bool(row["is_demo"]) if "is_demo" in keys else False
     return AuthUser(
         row["id"],
         row["email"],
@@ -2044,10 +2852,12 @@ def _user_from_row(row: sqlite3.Row) -> AuthUser:
         row["disabled_at"],
         theme_preference,
         email_verified_at,
+        is_demo,
     )
 
 
 def _admin_user_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
     return {
         "id": row["id"],
         "email": row["email"],
@@ -2055,9 +2865,10 @@ def _admin_user_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "role": row["role"],
         "disabled": bool(row["disabled_at"]),
         "disabled_at": row["disabled_at"],
-        "email_verified": bool(row["email_verified_at"]) if "email_verified_at" in row.keys() else True,
-        "email_verified_at": row["email_verified_at"] if "email_verified_at" in row.keys() else None,
+        "email_verified": bool(row["email_verified_at"]) if "email_verified_at" in keys else True,
+        "email_verified_at": row["email_verified_at"] if "email_verified_at" in keys else None,
         "totp_enabled": bool(row["totp_enabled_at"]),
+        "is_demo": bool(row["is_demo"]) if "is_demo" in keys else False,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

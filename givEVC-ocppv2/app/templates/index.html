@@ -305,6 +305,18 @@ body:not(.is-admin) .admin-only { display:none !important; }
 }
 .header-title { font-weight: 600; font-size: 16px; flex: 1; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
+.demo-badge {
+  display: none; align-items: center; gap: 5px;
+  background: rgba(34,197,94,.15); border: 1px solid rgba(34,197,94,.35);
+  color: #22c55e; border-radius: 6px; padding: 3px 9px;
+  font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  white-space: nowrap;
+}
+.demo-badge::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: #22c55e; flex-shrink: 0;
+}
+body.is-demo .demo-badge { display: flex; }
 .icon-btn {
   width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border);
   background: transparent; cursor: pointer; display: flex; align-items: center;
@@ -372,11 +384,30 @@ body:not(.is-admin) .admin-only { display:none !important; }
   background: var(--teal-lt); color: var(--teal-dk); border-radius: 20px;
   padding: 6px 16px; font-size: 13px; font-weight: 600;
 }
+.power-ring-wrap {
+  position: relative; width: 110px; height: 110px; flex-shrink: 0;
+}
+.power-ring-spin {
+  position: absolute; inset: -8px; width: calc(100% + 16px); height: calc(100% + 16px);
+  pointer-events: none; opacity: 0; transition: opacity .3s;
+}
+.power-ring-spin circle {
+  fill: none; stroke: var(--warn); stroke-width: 3;
+  stroke-dasharray: 340 37;
+  stroke-linecap: round;
+  transform-origin: center;
+  animation: spin-arc 1.4s linear infinite;
+}
+.power-ring-wrap.charging .power-ring-spin { opacity: 1; }
+@keyframes spin-arc {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 .power-ring {
   width: 110px; height: 110px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--teal-lt), #fff);
+  background: linear-gradient(145deg, #3a3f44 0%, #22272b 60%, #2c3236 100%);
   border: 3px solid var(--teal); display: flex; flex-direction: column;
-  align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,191,165,.2);
+  align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,191,165,.2), inset 0 1px 0 rgba(255,255,255,.06);
 }
 .power-action-btn {
   cursor: pointer; font-family: inherit; color: var(--teal); transition: all .15s; appearance: none; padding: 0;
@@ -695,8 +726,27 @@ body.modal-open { overflow: hidden; }
 .chart-sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
 .chart-wrap { position: relative; width: 100%; }
 canvas { width: 100% !important; display: block; }
+.chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  display: none;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 10px));
+  background: var(--nav-bg);
+  color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.16);
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.chart-tooltip strong { display: block; font-size: 13px; color: #fff; }
+.chart-tooltip span { color: rgba(255,255,255,.72); }
 .chart-legend { display: flex; gap: 20px; margin-top: 16px; flex-wrap: wrap; }
-.leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; transition: opacity .15s; }
+.leg-item.leg-hidden { opacity: .35; }
 .leg-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .leg-dash { width: 16px; height: 3px; border-radius: 2px; flex-shrink: 0; }
 
@@ -926,6 +976,7 @@ canvas { width: 100% !important; display: block; }
       <span></span><span></span><span></span>
     </button>
     <div class="header-title" id="header-title">Overview</div>
+    <div class="demo-badge">Demo Mode</div>
     <div class="header-actions">
       <button class="icon-btn" onclick="toggleFullscreen()" title="Fullscreen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
@@ -984,6 +1035,11 @@ canvas { width: 100% !important; display: block; }
           <div class="stat-sub">Energy used today</div>
         </div>
         <div class="stat-card teal">
+          <div class="stat-label">This Month</div>
+          <div class="stat-value"><span id="stat-month-val">—</span><span id="stat-month-unit" class="unit"></span></div>
+          <div class="stat-sub">Energy used this month</div>
+        </div>
+        <div class="stat-card teal">
           <div class="stat-label">Total Energy</div>
           <div class="stat-value"><span id="stat-total-val">—</span><span id="stat-total-unit" class="unit">kWh</span></div>
           <div class="stat-sub">All time</div>
@@ -1000,11 +1056,16 @@ canvas { width: 100% !important; display: block; }
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
               Vehicle Not Plugged In
             </div>
-            <button id="charge-action-btn" class="power-ring power-action-btn" type="button" onclick="doToggleCharging(this)" aria-label="Start charging" title="Start charging" disabled>
-              <svg id="charge-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-              <div id="hero-power-val" class="pw-val">—</div>
-              <div id="hero-power-unit" class="pw-unit">kW</div>
-            </button>
+            <div id="charge-ring-wrap" class="power-ring-wrap">
+              <svg class="power-ring-spin" viewBox="0 0 126 126" aria-hidden="true">
+                <circle cx="63" cy="63" r="60"/>
+              </svg>
+              <button id="charge-action-btn" class="power-ring power-action-btn" type="button" onclick="doToggleCharging(this)" aria-label="Start charging" title="Start charging" disabled>
+                <svg id="charge-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+                <div id="hero-power-val" class="pw-val">—</div>
+                <div id="hero-power-unit" class="pw-unit">kW</div>
+              </button>
+            </div>
             <div id="mode-badge" class="mode-badge">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               Grid Mode
@@ -1027,7 +1088,7 @@ canvas { width: 100% !important; display: block; }
               </div>
               <div class="energy-stat-row">
                 <span class="lbl">This Month</span>
-                <span id="energy-month" class="val">—</span>
+                <span id="energy-month" class="val">— <span class="u">kWh</span></span>
               </div>
               <div class="energy-stat-row">
                 <span class="lbl">Total (All Time)</span>
@@ -1252,7 +1313,8 @@ canvas { width: 100% !important; display: block; }
 
           <div class="settings-card">
             <h4>Plug and Go</h4>
-            <p>Start charging automatically as soon as the vehicle is plugged in.</p>
+            <p>Start charging automatically as soon as the vehicle is plugged in. This feature is only available whilst the charger is connected to the portal.
+            </p>
             <div class="toggle-row">
               <label class="toggle">
                 <input type="checkbox" id="toggle-plug-go" onchange="sendPlugAndGo(this)">
@@ -1276,7 +1338,7 @@ canvas { width: 100% !important; display: block; }
 
           <div class="settings-card">
             <h4>Local Modbus Control</h4>
-            <p>Allow third-party devices on the local network to control this charger via Modbus. Charger restarts on change.</p>
+            <p>Allow third-party devices (such as GivTCP) on the local network to control this charger via Modbus. Charger restarts on change.</p>
             <div class="toggle-row">
               <label class="toggle">
                 <input type="checkbox" id="toggle-modbus" onchange="sendConfig('EnableLocalModbus', this.checked ? 'true' : 'false', this)">
@@ -1301,7 +1363,7 @@ canvas { width: 100% !important; display: block; }
 
           <div class="settings-card">
             <h4>Max Energy Per Session</h4>
-            <p>Stop charging once this energy threshold is reached in a single session. Set to 0 to disable.</p>
+            <p>Stop charging once this energy threshold is reached in a single session.</p>
             <div class="range-group">
               <div class="range-value"><span id="max-energy-val">—</span><span id="max-energy-unit" class="unit"> kWh</span></div>
               <div class="range-with-toggle">
@@ -1320,7 +1382,7 @@ canvas { width: 100% !important; display: block; }
 
           <div class="settings-card">
             <h4>DNO Fuse Size</h4>
-            <p>Set the maximum grid import capacity permitted by the installation.</p>
+            <p>Set the maximum grid import capacity permitted by the installation. Setting the limit to off treats the limit as maximum (100A). Be careful changing this setting. </p>
             <div class="range-group">
               <div class="range-value"><span id="dno-val">—</span><span id="dno-unit" class="unit"> A</span></div>
               <div class="range-with-toggle">
@@ -1339,7 +1401,7 @@ canvas { width: 100% !important; display: block; }
 
           <div class="settings-card" id="card-suspend-timeout">
             <h4>Suspend Timeout</h4>
-            <p>How long the charger waits once suspended before sleeping, in minutes. Set to 0 to disable.</p>
+            <p>How long the charger waits once suspended before sleeping, in minutes.</p>
             <div class="range-group">
               <div class="range-value"><span id="sleep-val">—</span></div>
               <div class="range-with-toggle">
@@ -1404,7 +1466,7 @@ canvas { width: 100% !important; display: block; }
 
           <div class="settings-card">
             <h4>Randomised Delay</h4>
-            <p>Regulatory requirement: scheduled charges start after a random delay to reduce grid strain. Range: 600–1800 s.</p>
+            <p>Regulatory requirement: scheduled charges start after a random delay to reduce grid strain.</p>
             <div class="range-group">
               <div class="range-value"><span id="rand-delay-val">—</span><span class="unit"> s</span></div>
               <input type="range" id="range-rand-delay" min="600" max="1800" step="1" value="600"
@@ -1498,25 +1560,36 @@ canvas { width: 100% !important; display: block; }
     <div class="section" id="page-power">
       <div class="chart-bar">
         <div class="date-nav">
-          <button>‹</button>
-          <input type="date" value="2026-04-13">
-          <button>›</button>
+          <button type="button" onclick="shiftPowerDate(-1)">‹</button>
+          <input id="power-date" type="date" onchange="loadPowerChartData()">
+          <button type="button" onclick="shiftPowerDate(1)">›</button>
         </div>
-        <button class="icon-btn" onclick="drawCharts()">
+        <select id="power-metric" class="period-select" onchange="loadPowerChartData()">
+          <option value="power">Power</option>
+          <option value="current">Current</option>
+          <option value="voltage">Voltage</option>
+        </select>
+        <select id="power-period" class="period-select" onchange="onPowerPeriodChange()">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly" selected>Monthly</option>
+        </select>
+        <button class="icon-btn" onclick="loadPowerChartData()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
       <div class="card">
         <div class="card-body chart-card">
-          <div class="chart-title">Power</div>
-          <div class="chart-sub">Real-time power draw · kW / V</div>
+          <div class="chart-title">Power &amp; Metrics</div>
+          <div id="power-chart-sub" class="chart-sub"></div>
           <div class="chart-wrap">
             <canvas id="power-chart" height="280"></canvas>
           </div>
-          <div class="chart-legend">
-            <div class="leg-item"><div class="leg-dash" style="background:#ef5350"></div>Grid Power</div>
-            <div class="leg-item"><div class="leg-dash" style="background:#00bfa5"></div>EV Charge Power</div>
-            <div class="leg-item"><div class="leg-dash" style="background:#7c4dff"></div>EV Charge Voltage</div>
+          <div class="chart-legend" id="power-legend">
+            <div class="leg-item" data-series="grid_power_kw" onclick="togglePowerSeries('grid_power_kw')"><div class="leg-dash" style="background:#ef5350"></div>Grid Power</div>
+            <div class="leg-item" data-series="ev_power_kw" onclick="togglePowerSeries('ev_power_kw')"><div class="leg-dash" style="background:#00bfa5"></div>EV Charge Power</div>
+            <div class="leg-item" data-series="ev_current_a" onclick="togglePowerSeries('ev_current_a')" style="display:none"><div class="leg-dash" style="background:#00bfa5"></div>EV Current</div>
+            <div class="leg-item" data-series="ev_voltage_v" onclick="togglePowerSeries('ev_voltage_v')" style="display:none"><div class="leg-dash" style="background:#7c4dff"></div>EV Voltage</div>
           </div>
         </div>
       </div>
@@ -1526,21 +1599,26 @@ canvas { width: 100% !important; display: block; }
     <div class="section" id="page-energy">
       <div class="chart-bar">
         <div class="date-nav">
-          <button>‹</button>
-          <input type="date" value="2026-04-13">
-          <button>›</button>
+          <button type="button" onclick="shiftEnergyDate(-1)">‹</button>
+          <input id="energy-date" type="date" onchange="loadEnergyChartData()">
+          <button type="button" onclick="shiftEnergyDate(1)">›</button>
         </div>
-        <select class="period-select"><option>Daily</option><option>Weekly</option><option>Monthly</option></select>
-        <button class="icon-btn" onclick="drawCharts()">
+        <select id="energy-period" class="period-select" onchange="loadEnergyChartData()">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly" selected>Monthly</option>
+        </select>
+        <button class="icon-btn" onclick="loadEnergyChartData()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
       <div class="card">
         <div class="card-body chart-card">
           <div class="chart-title">Charge Energy</div>
-          <div class="chart-sub">Daily energy delivered · kWh</div>
+          <div id="energy-chart-sub" class="chart-sub">Daily energy delivered · kWh</div>
           <div class="chart-wrap">
             <canvas id="energy-chart" height="280"></canvas>
+            <div id="energy-chart-tooltip" class="chart-tooltip" role="tooltip"></div>
           </div>
         </div>
       </div>
@@ -2216,7 +2294,7 @@ async function submitAuth(event, mode) {
       showEmailVerificationPrompt(data.email || payload.email, data.error || data.message);
       return;
     }
-    applyAuthState(data);
+    applyAuthState(data, { fromLogin: true });
   } catch (err) {
     set('auth-error', err.message || 'Authentication failed');
     if (mode === 'login' && /authentication code/i.test(err.message || '')) {
@@ -2436,7 +2514,7 @@ async function submitEmailVerification(event) {
     });
     _pendingEmailVerification.email = null;
     clearEmailVerificationCooldown();
-    applyAuthState(data);
+    applyAuthState(data, { fromLogin: true });
   } catch (err) {
     set('auth-error', err.message || 'Verification failed');
   } finally {
@@ -2472,8 +2550,9 @@ async function refreshAuthState() {
   }
 }
 
-function applyAuthState(data) {
+function applyAuthState(data, { fromLogin = false } = {}) {
   setRegistrationRoleNotice(data.registration_role);
+  const wasAuthenticated = !!_authState.authenticated;
   _authState = {
     authenticated: !!data.authenticated,
     user: data.user || null,
@@ -2495,18 +2574,22 @@ function applyAuthState(data) {
   const hasCharger = _authState.chargers.length > 0;
   document.body.className = hasCharger ? 'auth-app has-charger' : 'auth-app no-charger';
   document.body.classList.toggle('is-admin', _authState.user?.role === 'Admin');
+  document.body.classList.toggle('is-demo', !!_authState.user?.is_demo);
   set('nav-user-name', _authState.user?.display_name || _authState.user?.email || 'Account');
   set('nav-user-role', _authState.user?.role || 'User');
   renderPendingOnboarding();
   renderChargerList();
 
+  // On fresh login, always land on the overview page regardless of current URL
+  const targetPath = (fromLogin && !wasAuthenticated && hasCharger) ? '/' : window.location.pathname;
+
   if (!hasCharger) {
-    applyRoute(window.location.pathname, { replace: true });
+    applyRoute(targetPath, { replace: true });
     closeNav();
     return;
   }
 
-  applyRoute(window.location.pathname, { replace: true });
+  applyRoute(targetPath, { replace: true });
   if (!_sseStarted) {
     _sseStarted = true;
     connectSSE();
@@ -3586,6 +3669,13 @@ function showPage(name, options = {}) {
   } else {
     stopChargerPageRefresh();
   }
+  if (pageName === 'power') {
+    initPowerChartControls();
+    loadPowerChartData();
+    startPowerChartRefresh();
+  } else {
+    stopPowerChartRefresh();
+  }
   if (pageName === 'account') {
     activateAccountSub(options.sub || 'security');
     loadAccountSecurityPage();
@@ -3595,7 +3685,10 @@ function showPage(name, options = {}) {
   }
   closeNav();
   if (!options.skipPush) updateRoute(pageName, options.sub);
-  if (pageName === 'power' || pageName === 'energy') setTimeout(drawCharts, 50);
+  if (pageName === 'energy') {
+    initEnergyChartControls();
+    loadEnergyChartData();
+  }
 }
 
 function showSub(name, options = {}) {
@@ -3734,6 +3827,15 @@ let _chargerPageRefreshTimer = null;
 let _chargerPageRefreshAbort = null;
 let _chargingTogglePending = null;
 let _chargingToggleTimeout = null;
+let _powerChartData = null;
+let _powerChartLoading = false;
+let _powerChartError = '';
+let _powerChartRefreshTimer = null;
+let _powerHiddenSeries = new Set();
+let _energyChartData = null;
+let _energyChartLoading = false;
+let _energyChartError = '';
+let _energyBarHitboxes = [];
 const CHARGE_PENDING_TIMEOUT_MS = 120000;
 const SCHEDULE_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const CHARGE_START_STATUSES = new Set(['Available', 'Preparing']);
@@ -3854,6 +3956,8 @@ function applyState(s) {
   set('stat-total-unit',   s.total_energy_kwh != null ? 'kWh' : '');
   set('stat-today-val',    s.today_kwh != null ? fmt(s.today_kwh, 2) : '—');
   set('stat-today-unit',   s.today_kwh != null ? 'kWh' : '');
+  set('stat-month-val',    s.month_kwh != null ? fmt(s.month_kwh, 2) : '—');
+  set('stat-month-unit',   s.month_kwh != null ? 'kWh' : '');
 
   // ── Charger hero ──────────────────────────────────
   const plugged = !!s.car_plugged_in;
@@ -3877,7 +3981,7 @@ function applyState(s) {
   // ── Energy panel ──────────────────────────────────
   _setEnergyVal('energy-session', _lastKwh != null ? fmt(_lastKwh, 2) : null);
   _setEnergyVal('energy-today',   s.today_kwh != null ? fmt(s.today_kwh, 2) : null);
-  _setEnergyVal('energy-month',   null);
+  _setEnergyVal('energy-month',   s.month_kwh != null ? fmt(s.month_kwh, 2) : null);
   _setEnergyVal('energy-total',   s.total_energy_kwh != null ? fmt(s.total_energy_kwh, 2) : null);
 
   // Transaction timing shown in energy panel
@@ -4044,6 +4148,7 @@ function _resolveChargingPendingFromState(s) {
 function syncChargeAction(s) {
   const btn = document.getElementById('charge-action-btn');
   const icon = document.getElementById('charge-action-icon');
+  const wrap = document.getElementById('charge-ring-wrap');
   if (!btn || !icon) return;
   _resolveChargingPendingFromState(s);
   const { status, pluggedIn, statusCanStop, statusCanStart, canStart, canStop } = _chargeControlForState(s);
@@ -4054,6 +4159,7 @@ function syncChargeAction(s) {
   btn.disabled = disabled;
   btn.classList.toggle('charging', displayCanStop);
   btn.classList.toggle('disabled-state', disabled);
+  if (wrap) wrap.classList.toggle('charging', displayCanStop);
   const disabledLabel = pending
     ? 'Waiting for charger status update'
     : statusCanStart && !pluggedIn
@@ -4985,9 +5091,209 @@ async function handleSuspendTimeoutToggle(toggle) {
 // Charts
 // ═══════════════════════════════════════════════════
 
+function initEnergyChartControls() {
+  const dateInput = document.getElementById('energy-date');
+  if (dateInput && !dateInput.value) dateInput.value = dateInputValue(new Date());
+}
+
+function dateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function shiftEnergyDate(direction) {
+  initEnergyChartControls();
+  const dateInput = document.getElementById('energy-date');
+  const period = document.getElementById('energy-period')?.value || 'daily';
+  if (!dateInput) return;
+  const current = dateInput.value ? new Date(`${dateInput.value}T12:00:00`) : new Date();
+  if (period === 'monthly') {
+    current.setMonth(current.getMonth() + direction);
+  } else {
+    current.setDate(current.getDate() + (period === 'weekly' ? direction * 7 : direction));
+  }
+  dateInput.value = dateInputValue(current);
+  loadEnergyChartData();
+}
+
+async function loadEnergyChartData() {
+  initEnergyChartControls();
+  const date = document.getElementById('energy-date')?.value || dateInputValue(new Date());
+  const period = document.getElementById('energy-period')?.value || 'daily';
+  _energyChartLoading = true;
+  _energyChartError = '';
+  drawBarChart();
+  try {
+    const data = await apiJson(`/api/energy?date=${encodeURIComponent(date)}&period=${encodeURIComponent(period)}`);
+    _energyChartData = data.energy || null;
+    const label = energyPeriodLabel(_energyChartData?.period || period);
+    set('energy-chart-sub', `${label} energy delivered · ${fmt(_energyChartData?.total_kwh || 0, 2)} kWh`);
+  } catch (err) {
+    _energyChartData = null;
+    _energyChartError = err.message || 'Could not load energy data';
+    set('energy-chart-sub', _energyChartError);
+  } finally {
+    _energyChartLoading = false;
+    drawBarChart();
+  }
+}
+
+function energyPeriodLabel(period) {
+  if (period === 'weekly') return 'Weekly';
+  if (period === 'monthly') return 'Monthly';
+  return 'Daily';
+}
+
+function cssVar(name, fallback) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+function initEnergyChartHover() {
+  const canvas = document.getElementById('energy-chart');
+  if (!canvas || canvas.dataset.hoverReady === '1') return;
+  canvas.dataset.hoverReady = '1';
+  canvas.addEventListener('pointermove', showEnergyChartTooltip);
+  canvas.addEventListener('pointerleave', hideEnergyChartTooltip);
+  canvas.addEventListener('blur', hideEnergyChartTooltip);
+}
+
+function showEnergyChartTooltip(event) {
+  const canvas = document.getElementById('energy-chart');
+  const tooltip = document.getElementById('energy-chart-tooltip');
+  if (!canvas || !tooltip || !_energyBarHitboxes.length) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const hit = _energyBarHitboxes.find(box =>
+    x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h
+  );
+  if (!hit) {
+    hideEnergyChartTooltip();
+    return;
+  }
+  tooltip.innerHTML = `<strong>${escapeHtml(hit.label)}</strong><span>${escapeHtml(fmt(hit.value, 3))} kWh</span>`;
+  const tooltipX = Math.max(50, Math.min(rect.width - 50, hit.x + hit.w / 2));
+  const tooltipY = Math.max(18, hit.y);
+  tooltip.style.left = `${tooltipX}px`;
+  tooltip.style.top = `${tooltipY}px`;
+  tooltip.style.display = 'block';
+}
+
+function hideEnergyChartTooltip() {
+  const tooltip = document.getElementById('energy-chart-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+}
+
 function drawCharts() {
   drawLineChart();
   drawBarChart();
+}
+
+function initPowerChartControls() {
+  const dateInput = document.getElementById('power-date');
+  if (dateInput && !dateInput.value) {
+    dateInput.value = localDateInputValue(new Date());
+  }
+}
+
+function localDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function shiftPowerDate(delta) {
+  const input = document.getElementById('power-date');
+  if (!input) return;
+  const period = document.getElementById('power-period')?.value || 'daily';
+  const step = period === 'monthly' ? 30 : period === 'weekly' ? 7 : 1;
+  const base = input.value ? new Date(`${input.value}T00:00:00`) : new Date();
+  base.setDate(base.getDate() + delta * step);
+  input.value = localDateInputValue(base);
+  loadPowerChartData();
+}
+
+function onPowerPeriodChange() {
+  // Voltage only makes sense for daily (time-series) view
+  const period = document.getElementById('power-period')?.value || 'daily';
+  const metricSel = document.getElementById('power-metric');
+  if (metricSel) {
+    const voltOpt = metricSel.querySelector('option[value="voltage"]');
+    if (voltOpt) voltOpt.disabled = period !== 'daily';
+    if (period !== 'daily' && metricSel.value === 'voltage') metricSel.value = 'power';
+  }
+  loadPowerChartData();
+}
+
+function togglePowerSeries(series) {
+  if (_powerHiddenSeries.has(series)) {
+    _powerHiddenSeries.delete(series);
+  } else {
+    _powerHiddenSeries.add(series);
+  }
+  // Sync legend item appearance
+  document.querySelectorAll('#power-legend .leg-item').forEach(el => {
+    el.classList.toggle('leg-hidden', _powerHiddenSeries.has(el.dataset.series));
+  });
+  drawLineChart();
+}
+
+function _updatePowerLegend(metric) {
+  const showGridPower  = metric === 'power';
+  const showEvPower    = metric === 'power';
+  const showEvCurrent  = metric === 'current';
+  const showEvVoltage  = metric === 'voltage';
+  const legend = document.getElementById('power-legend');
+  if (!legend) return;
+  legend.querySelector('[data-series="grid_power_kw"]').style.display  = showGridPower  ? '' : 'none';
+  legend.querySelector('[data-series="ev_power_kw"]').style.display    = showEvPower    ? '' : 'none';
+  legend.querySelector('[data-series="ev_current_a"]').style.display   = showEvCurrent  ? '' : 'none';
+  legend.querySelector('[data-series="ev_voltage_v"]').style.display   = showEvVoltage  ? '' : 'none';
+}
+
+function startPowerChartRefresh() {
+  stopPowerChartRefresh();
+  _powerChartRefreshTimer = setInterval(() => {
+    const page = document.getElementById('page-power');
+    const period = document.getElementById('power-period')?.value || 'daily';
+    if (page?.classList.contains('active') && period === 'daily') loadPowerChartData({ silent: true });
+  }, 15000);
+}
+
+function stopPowerChartRefresh() {
+  if (_powerChartRefreshTimer) clearInterval(_powerChartRefreshTimer);
+  _powerChartRefreshTimer = null;
+}
+
+async function loadPowerChartData(options = {}) {
+  initPowerChartControls();
+  const date   = document.getElementById('power-date')?.value   || localDateInputValue(new Date());
+  const period = document.getElementById('power-period')?.value || 'daily';
+  const metric = document.getElementById('power-metric')?.value || 'power';
+  _updatePowerLegend(metric);
+  _powerChartError = '';
+  _powerChartLoading = !options.silent;
+  drawLineChart();
+  try {
+    const data = await apiJson(`/api/power?date=${encodeURIComponent(date)}&period=${encodeURIComponent(period)}`);
+    _powerChartData = data.power || null;
+    const count = _powerChartData?.samples?.length || 0;
+    const periodLabel = { daily: 'Daily', weekly: 'Weekly (7 days)', monthly: 'Monthly (30 days)' }[period] || period;
+    const metricLabel = { power: 'kW', current: 'A', voltage: 'V' }[metric] || '';
+    set('power-chart-sub', count
+      ? `${periodLabel} · ${count} sample${count === 1 ? '' : 's'} · ${metricLabel}`
+      : `${periodLabel} · no data`);
+  } catch (err) {
+    _powerChartData = null;
+    _powerChartError = err.message || 'Could not load power data';
+    set('power-chart-sub', _powerChartError);
+  } finally {
+    _powerChartLoading = false;
+    drawLineChart();
+  }
 }
 
 function drawLineChart() {
@@ -5001,44 +5307,128 @@ function drawLineChart() {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   const W = rect.width, H = 280;
-  const pad = { t: 20, r: 20, b: 40, l: 50 };
+  const pad = { t: 20, r: 20, b: 40, l: 52 };
   const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  const gridColor = cssVar('--border', '#e8eaf0');
+  const muted     = cssVar('--muted',  '#8a909e');
+  const errColor  = cssVar('--err',    '#ef5350');
+  const teal      = cssVar('--teal',   '#00bfa5');
+  const purple    = '#7c4dff';
+
+  const metric  = document.getElementById('power-metric')?.value  || 'power';
+  const period  = document.getElementById('power-period')?.value  || 'daily';
+  const samples = _powerChartData?.samples || [];
+
+  // Determine which series to show based on metric
+  const SERIES = metric === 'power'   ? [
+      { field: 'grid_power_kw', color: errColor,  label: 'Grid Power' },
+      { field: 'ev_power_kw',   color: teal,       label: 'EV Power'  },
+    ] : metric === 'current' ? [
+      { field: 'ev_current_a',  color: teal,       label: 'EV Current' },
+    ] : [
+      { field: 'ev_voltage_v',  color: purple,     label: 'EV Voltage' },
+    ];
+
+  const visibleSeries = SERIES.filter(s => !_powerHiddenSeries.has(s.field));
+
+  // Compute axis range from visible series
+  const allVals = visibleSeries.flatMap(s =>
+    samples.map(sp => sp[s.field]).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number)
+  );
+  const valMax = allVals.length ? Math.max(...allVals) : 0;
+  const valMin = metric === 'voltage' && allVals.length ? Math.min(...allVals) : 0;
+  const axisMax = valMax > 0
+    ? (metric === 'voltage' ? Math.ceil((valMax + 5) / 10) * 10 : Math.max(1, Math.ceil(valMax * 1.25)))
+    : (metric === 'voltage' ? 260 : (metric === 'current' ? 32 : 8));
+  const axisMin = metric === 'voltage' && allVals.length
+    ? Math.max(0, Math.floor((valMin - 5) / 10) * 10)
+    : 0;
+  const axisSpan = Math.max(1, axisMax - axisMin);
+  const yLabel = metric === 'power' ? 'Power (kW)' : metric === 'current' ? 'Current (A)' : 'Voltage (V)';
+  const decimals = metric === 'voltage' ? 0 : axisMax >= 10 ? 1 : 2;
 
   ctx.clearRect(0, 0, W, H);
 
-  // grid
-  ctx.strokeStyle = '#e8eaf0'; ctx.lineWidth = 1;
+  // horizontal grid lines + left axis labels
+  ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + (ch / 4) * i;
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
-    ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText((4 - i) * 2, pad.l - 6, y + 4);
+    const axisVal = axisMax - (axisSpan / 4) * i;
+    ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(axisVal, decimals), pad.l - 6, y + 4);
   }
 
-  // x labels
-  const labels = ['00:00','02:00','04:00','06:00','08:00','10:00','12:00','14:00','16:00','18:00','20:00','22:00','24:00'];
-  ctx.fillStyle = '#8a909e'; ctx.textAlign = 'center'; ctx.font = '11px sans-serif';
-  labels.forEach((lbl, i) => {
-    const x = pad.l + (i / 12) * cw;
-    ctx.fillText(lbl, x, H - 10);
-    if (i > 0 && i < 12) {
-      ctx.strokeStyle = '#f0f0f0'; ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ch); ctx.stroke();
-    }
-  });
+  // x-axis labels
+  ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  if (period === 'daily') {
+    const timeLabels = ['00:00','04:00','08:00','12:00','16:00','20:00','24:00'];
+    timeLabels.forEach((lbl, i) => {
+      const x = pad.l + (i / 6) * cw;
+      ctx.fillText(lbl, x, H - 10);
+      if (i > 0 && i < 6) {
+        ctx.strokeStyle = gridColor; ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ch); ctx.stroke();
+      }
+    });
+  } else {
+    const step = samples.length > 14 ? Math.ceil(samples.length / 7) : 1;
+    samples.forEach((s, i) => {
+      if (i % step !== 0 && i !== samples.length - 1) return;
+      const x = pad.l + (i / Math.max(1, samples.length - 1)) * cw;
+      ctx.fillText(s.label || '', x, H - 10);
+      if (i > 0 && i < samples.length - 1) {
+        ctx.strokeStyle = gridColor; ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ch); ctx.stroke();
+      }
+    });
+  }
 
-  // "No data" placeholder
-  ctx.fillStyle = '#c8ccd6'; ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
-  ctx.fillText('No data available for this date', W / 2, pad.t + ch / 2);
+  const message = _powerChartLoading
+    ? 'Loading...'
+    : _powerChartError || (!samples.length ? 'No data available' : '');
+  if (message) {
+    ctx.fillStyle = _powerChartError ? errColor : '#c8ccd6';
+    ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
+    ctx.fillText(message, W / 2, pad.t + ch / 2);
+  } else {
+    const yForValue = v => pad.t + ch - ((Math.max(axisMin, Math.min(axisMax, Number(v))) - axisMin) / axisSpan) * ch;
+
+    const xForSample = (sample, index) => {
+      if (period === 'daily') {
+        const d = new Date(sample.timestamp);
+        if (!Number.isFinite(d.getTime())) return null;
+        const minutes = d.getHours() * 60 + d.getMinutes();
+        return pad.l + (minutes / 1440) * cw;
+      }
+      return pad.l + (index / Math.max(1, samples.length - 1)) * cw;
+    };
+
+    visibleSeries.forEach(({ field, color }) => {
+      const points = samples
+        .map((s, i) => ({ x: xForSample(s, i), v: s[field] }))
+        .filter(p => p.x !== null && p.v !== null && p.v !== undefined && Number.isFinite(Number(p.v)))
+        .map(p => ({ x: p.x, y: yForValue(p.v) }));
+      if (!points.length) return;
+      ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.beginPath();
+      points.forEach((pt, idx) => idx === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y));
+      ctx.stroke();
+      if (samples.length <= 60) {
+        ctx.fillStyle = color;
+        points.forEach(pt => { ctx.beginPath(); ctx.arc(pt.x, pt.y, 2.4, 0, Math.PI * 2); ctx.fill(); });
+      }
+    });
+  }
 
   // y-axis label
   ctx.save(); ctx.translate(14, pad.t + ch / 2); ctx.rotate(-Math.PI / 2);
-  ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('Power (kW)', 0, 0); ctx.restore();
+  ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(yLabel, 0, 0); ctx.restore();
 }
 
 function drawBarChart() {
   const canvas = document.getElementById('energy-chart');
   if (!canvas) return;
+  initEnergyChartHover();
+  hideEnergyChartTooltip();
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.parentElement.getBoundingClientRect();
   canvas.width = rect.width * dpr;
@@ -5051,31 +5441,66 @@ function drawBarChart() {
   const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
 
   ctx.clearRect(0, 0, W, H);
+  _energyBarHitboxes = [];
+  const labels = _energyChartData?.labels || [];
+  const tickLabels = _energyChartData?.tick_labels || labels;
+  const values = _energyChartData?.buckets || [];
+  const maxValue = Math.max(0, ...values);
+  const axisMax = maxValue > 0 ? Math.max(1, Math.ceil(maxValue * 1.2)) : 20;
+  const gridColor = cssVar('--border', '#e8eaf0');
+  const muted = cssVar('--muted', '#8a909e');
+  const teal = cssVar('--teal', '#00bfa5');
 
   // grid
-  ctx.strokeStyle = '#e8eaf0'; ctx.lineWidth = 1;
+  ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + (ch / 4) * i;
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
-    ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText((4 - i) * 5, pad.l - 6, y + 4);
+    ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(axisMax - (axisMax / 4) * i, axisMax >= 10 ? 0 : 1), pad.l - 6, y + 4);
   }
 
-  // x labels — hours
-  const labels = ['00','02','04','06','08','10','12','14','16','18','20','22'];
-  ctx.fillStyle = '#8a909e'; ctx.textAlign = 'center'; ctx.font = '11px sans-serif';
-  labels.forEach((lbl, i) => {
-    const x = pad.l + ((i + 0.5) / 12) * cw;
-    ctx.fillText(lbl + ':00', x, H - 10);
-  });
+  if (_energyChartLoading || _energyChartError || !labels.length || maxValue <= 0) {
+    ctx.fillStyle = _energyChartError ? cssVar('--err', '#ef5350') : '#c8ccd6';
+    ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
+    const message = _energyChartLoading
+      ? 'Loading energy data...'
+      : _energyChartError || 'No energy data available for this period';
+    ctx.fillText(message, W / 2, pad.t + ch / 2);
+  } else {
+    const gap = Math.max(3, Math.min(10, cw / labels.length * 0.22));
+    const barW = Math.max(4, (cw / labels.length) - gap);
+    ctx.fillStyle = teal;
+    values.forEach((value, i) => {
+      const barH = (Math.max(0, value) / axisMax) * ch;
+      const x = pad.l + (i / labels.length) * cw + gap / 2;
+      const y = pad.t + ch - barH;
+      ctx.fillRect(x, y, barW, barH);
+      if (value > 0) {
+        _energyBarHitboxes.push({
+          x,
+          y: Math.max(pad.t, y),
+          w: barW,
+          h: Math.max(6, barH),
+          label: labels[i],
+          value,
+        });
+      }
+    });
+  }
 
-  // no-data
-  ctx.fillStyle = '#c8ccd6'; ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
-  ctx.fillText('No data available for this date', W / 2, pad.t + ch / 2);
+  ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.font = '11px sans-serif';
+  const xLabels = tickLabels.length ? tickLabels : [''];
+  const stride = xLabels.length > 24 ? Math.ceil(xLabels.length / 12) : xLabels.length > 12 ? 2 : 1;
+  xLabels.forEach((lbl, i) => {
+    if (i % stride !== 0 && i !== xLabels.length - 1) return;
+    const x = pad.l + ((i + 0.5) / Math.max(1, xLabels.length)) * cw;
+    ctx.fillText(lbl, x, H - 10);
+  });
 
   // y-axis label
   ctx.save(); ctx.translate(14, pad.t + ch / 2); ctx.rotate(-Math.PI / 2);
-  ctx.fillStyle = '#8a909e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillStyle = muted; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('Energy (kWh)', 0, 0); ctx.restore();
 }
 

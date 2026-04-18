@@ -17,7 +17,11 @@ from pathlib import Path
 
 from aiohttp import http_exceptions, web
 
-from auth_store import AuthStore, AuthUser, ROLE_ADMIN
+from auth_store import (
+    AuthStore, AuthUser, ROLE_ADMIN,
+    DEMO_EMAIL, DEMO_PASSWORD, DEMO_CHARGE_POINT_ID, SYSTEM_SETTING_DEMO_MODE,
+)
+from demo_simulator import DemoChargerSimulator
 from emailer import EmailSender
 from ocpp.coordinator import (
     CHARGE_DISABLED_STATUSES,
@@ -330,6 +334,46 @@ def build_web_app(
             text=json.dumps(_state_for_user(user)),
         )
 
+    async def api_energy(request: web.Request) -> web.Response:
+        user = _require_user(request)
+        active = _active_charger_for_user(user.id)
+        if active is None:
+            return _json_response({"error": "No adopted charger is selected"}, status=403)
+        charge_point_id = str(active.get("charge_point_id") or "").strip()
+        if not charge_point_id:
+            return _json_response({"error": "Selected charger has no charge point identity"}, status=403)
+
+        data = auth_store.get_energy_buckets(
+            user.id,
+            charge_point_id,
+            period=request.rel_url.query.get("period") or "daily",
+            anchor_date=request.rel_url.query.get("date") or None,
+        )
+        if data is None:
+            return _json_response({"error": "Selected charger is not available"}, status=404)
+        data["charge_point_id"] = charge_point_id
+        return _json_response({"energy": data})
+
+    async def api_power(request: web.Request) -> web.Response:
+        user = _require_user(request)
+        active = _active_charger_for_user(user.id)
+        if active is None:
+            return _json_response({"error": "No adopted charger is selected"}, status=403)
+        charge_point_id = str(active.get("charge_point_id") or "").strip()
+        if not charge_point_id:
+            return _json_response({"error": "Selected charger has no charge point identity"}, status=403)
+
+        data = auth_store.get_power_samples(
+            user.id,
+            charge_point_id,
+            anchor_date=request.rel_url.query.get("date") or None,
+            period=request.rel_url.query.get("period") or "daily",
+        )
+        if data is None:
+            return _json_response({"error": "Selected charger is not available"}, status=404)
+        data["charge_point_id"] = charge_point_id
+        return _json_response({"power": data})
+
     # ── REST: browser authentication ──────────────────────────────────────
     async def api_auth_session(request: web.Request) -> web.Response:
         user = request.get("user")
@@ -490,6 +534,12 @@ def build_web_app(
             email = str(body.get("email", ""))
         except Exception:
             return _json_response({"error": "Expected {email}"}, status=400)
+        _generic_ok = _json_response({
+            "ok": True,
+            "message": "If that email address is registered you will receive a password reset link shortly.",
+        })
+        if email.strip().lower() == DEMO_EMAIL.lower():
+            return _generic_ok
         try:
             smtp_error = _email_sender_unconfigured_error()
             if smtp_error:
@@ -503,10 +553,7 @@ def build_web_app(
                 )
         except Exception:
             _LOGGER.exception("Password reset request failed for %s", email)
-        return _json_response({
-            "ok": True,
-            "message": "If that email address is registered you will receive a password reset link shortly.",
-        })
+        return _generic_ok
 
     async def api_auth_validate_reset_token(request: web.Request) -> web.Response:
         token = str(request.rel_url.query.get("token", "")).strip()
@@ -554,6 +601,8 @@ def build_web_app(
 
     async def api_account_password(request: web.Request) -> web.Response:
         user = _require_user(request)
+        if user.is_demo:
+            return _json_response({"error": "Password changes are disabled for the demo account"}, status=403)
         try:
             body = await request.json()
             current_password = str(body.get("current_password", ""))
@@ -576,6 +625,8 @@ def build_web_app(
 
     async def api_account_2fa_setup(request: web.Request) -> web.Response:
         user = _require_user(request)
+        if user.is_demo:
+            return _json_response({"error": "2FA is disabled for the demo account"}, status=403)
         try:
             body = await request.json()
             setup = auth_store.create_totp_setup(user.id, str(body.get("current_password", "")))
@@ -589,6 +640,8 @@ def build_web_app(
 
     async def api_account_2fa_enable(request: web.Request) -> web.Response:
         user = _require_user(request)
+        if user.is_demo:
+            return _json_response({"error": "2FA is disabled for the demo account"}, status=403)
         try:
             body = await request.json()
             auth_store.enable_totp(user.id, str(body.get("otp", "")))
@@ -601,6 +654,8 @@ def build_web_app(
 
     async def api_account_2fa_disable(request: web.Request) -> web.Response:
         user = _require_user(request)
+        if user.is_demo:
+            return _json_response({"error": "2FA is disabled for the demo account"}, status=403)
         try:
             body = await request.json()
             auth_store.disable_totp(
@@ -650,6 +705,8 @@ def build_web_app(
 
     async def api_delete_charger(request: web.Request) -> web.Response:
         user = _require_user(request)
+        if user.is_demo:
+            return _json_response({"error": "Charger deletion is disabled for the demo account"}, status=403)
         charger_id = str(request.match_info["id"])
         if not auth_store.delete_charger(user.id, charger_id):
             return _json_response({"error": "Charger not found"}, status=404)
@@ -676,6 +733,11 @@ def build_web_app(
 
     async def api_create_onboarding(request: web.Request) -> web.Response:
         user = _require_user(request)
+        if user.is_demo:
+            return _json_response(
+                {"error": "Charger onboarding is not available in the demo account."},
+                status=403,
+            )
         session = auth_store.create_onboarding_session(
             user.id, _ocpp_public_origin(request)
         )
@@ -754,6 +816,9 @@ def build_web_app(
         if target_id == admin.id:
             return _json_response({"error": "The currently logged-in account cannot be deleted"}, status=400)
         try:
+            target_row = auth_store.find_user_by_id(target_id)
+            if target_row and target_row.get("is_demo"):
+                return _json_response({"error": "The demo account cannot be deleted"}, status=400)
             deleted = auth_store.delete_user(target_id)
         except ValueError as exc:
             return _json_response({"error": str(exc)}, status=404)
@@ -849,6 +914,25 @@ def build_web_app(
             "charger": charger,
             "chargers": _unadopted_chargers(auth_store, coordinator),
         })
+
+    async def api_admin_demo_settings(request: web.Request) -> web.Response:
+        _require_admin(request)
+        return _json_response({"demo_mode_enabled": auth_store.is_demo_mode_enabled()})
+
+    async def api_admin_set_demo_mode(request: web.Request) -> web.Response:
+        _require_admin(request)
+        try:
+            body = await request.json()
+            enabled = bool(body.get("enabled", True))
+            auth_store.set_demo_mode_enabled(enabled)
+            coordinator.record_portal_action(
+                "Admin Demo Mode",
+                "enabled" if enabled else "disabled",
+            )
+        except Exception:
+            _LOGGER.exception("Demo mode toggle failed")
+            return _json_response({"error": "Could not update demo mode"}, status=500)
+        return _json_response({"demo_mode_enabled": auth_store.is_demo_mode_enabled()})
 
     # ── SSE: push state updates to the browser ─────────────────────────────
     async def api_events(request: web.Request) -> web.StreamResponse:
@@ -1331,7 +1415,11 @@ def build_web_app(
     app.router.add_post("/api/admin/email-settings/test-smtp", api_admin_test_smtp)
     app.router.add_get("/api/admin/unadopted-chargers", api_admin_unadopted_chargers)
     app.router.add_post("/api/admin/unadopted-chargers/{charge_point_id}/assign", api_admin_assign_unadopted_charger)
+    app.router.add_get("/api/admin/demo", api_admin_demo_settings)
+    app.router.add_post("/api/admin/demo", api_admin_set_demo_mode)
     app.router.add_get("/api/state", api_state)
+    app.router.add_get("/api/energy", api_energy)
+    app.router.add_get("/api/power", api_power)
     app.router.add_get("/api/events", api_events)
     app.router.add_get("/api/ocpp/frames", api_ocpp_frames)
     app.router.add_get("/api/firmware/status", api_firmware_status)
@@ -1703,6 +1791,7 @@ def _user_payload(user: AuthUser) -> dict[str, object]:
         "disabled": bool(user.disabled_at),
         "theme_preference": user.theme_preference,
         "email_verified": bool(user.email_verified_at),
+        "is_demo": user.is_demo,
     }
 
 
@@ -1897,6 +1986,9 @@ async def main() -> None:
     )
 
     auth_store = AuthStore(AUTH_DB_PATH)
+    auth_store.seed_startup_data()
+    _LOGGER.info("Startup seed complete — demo account: %s / %s", DEMO_EMAIL, DEMO_PASSWORD)
+
     coordinator = OcppCoordinator(
         listen_port=OCPP_PORT,
         state_path=LEGACY_STATE_PATH,
@@ -1930,9 +2022,21 @@ async def main() -> None:
     await web.TCPSite(runner, host="0.0.0.0", port=INGRESS_PORT).start()
     _LOGGER.info("Web UI on 0.0.0.0:%s", INGRESS_PORT)
 
+    ocpp_scheme = "wss" if os.environ.get("OCPP_TLS", "").lower() in ("1", "true") else "ws"
+    demo_upstream = f"{ocpp_scheme}://127.0.0.1:{OCPP_PORT}"
+    demo_simulator = DemoChargerSimulator(demo_upstream, DEMO_PASSWORD)
+    demo_task = asyncio.create_task(demo_simulator.run_forever(), name="demo-simulator")
+    _LOGGER.info("Demo simulator started → %s/%s", demo_upstream, DEMO_CHARGE_POINT_ID)
+
     try:
         await asyncio.Event().wait()
     finally:
+        await demo_simulator.stop()
+        demo_task.cancel()
+        try:
+            await demo_task
+        except (asyncio.CancelledError, Exception):
+            pass
         await ocpp_server.stop()
         await firmware.stop()
         await runner.cleanup()
