@@ -90,6 +90,14 @@ class OcppServer:
         await self.coordinator.async_select_active_charge_point(charge_point_id)
         return False
 
+    async def kick_charge_point(self, charge_point_id: str) -> bool:
+        """Close the active WebSocket session for a charge point, if connected."""
+        session = self._sessions.get(charge_point_id)
+        if session is None or session.websocket.closed:
+            return False
+        await session.async_close("Charger removed")
+        return True
+
     async def promote_adopted_charge_point(self, charge_point_id: str | None, *, active: bool = False) -> bool:
         """Mark an already-connected charger as adopted without waiting for reconnect."""
         charge_point_id = str(charge_point_id or "").strip()

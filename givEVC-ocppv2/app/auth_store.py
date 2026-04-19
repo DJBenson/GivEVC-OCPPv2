@@ -1952,6 +1952,60 @@ class AuthStore:
             )
         return {"active_charger_id": charger_id, "chargers": self.list_chargers(user_id)}
 
+    def count_orphaned_data(self) -> dict[str, int]:
+        """Count orphaned rows without deleting them."""
+        orphan_clause = """
+            charge_point_id NOT IN (
+                SELECT charge_point_id FROM chargers
+                WHERE charge_point_id IS NOT NULL AND deleted_at IS NULL
+            )
+        """
+        with self._connect() as conn:
+            sessions = conn.execute(
+                f"SELECT COUNT(*) FROM charging_sessions WHERE {orphan_clause}"
+            ).fetchone()[0]
+            readings = conn.execute(
+                f"SELECT COUNT(*) FROM meter_readings WHERE {orphan_clause}"
+            ).fetchone()[0]
+            snapshots = conn.execute(
+                f"SELECT COUNT(*) FROM charger_state_snapshots WHERE {orphan_clause}"
+            ).fetchone()[0]
+        return {"sessions": sessions, "meter_readings": readings, "snapshots": snapshots}
+
+    def purge_orphaned_data(self) -> dict[str, int]:
+        """Delete charging_sessions, meter_readings, and charger_state_snapshots whose
+        charge_point_id no longer matches any non-deleted charger row."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            sessions = conn.execute(
+                """
+                DELETE FROM charging_sessions
+                WHERE charge_point_id NOT IN (
+                    SELECT charge_point_id FROM chargers
+                    WHERE charge_point_id IS NOT NULL AND deleted_at IS NULL
+                )
+                """
+            ).rowcount
+            readings = conn.execute(
+                """
+                DELETE FROM meter_readings
+                WHERE charge_point_id NOT IN (
+                    SELECT charge_point_id FROM chargers
+                    WHERE charge_point_id IS NOT NULL AND deleted_at IS NULL
+                )
+                """
+            ).rowcount
+            snapshots = conn.execute(
+                """
+                DELETE FROM charger_state_snapshots
+                WHERE charge_point_id NOT IN (
+                    SELECT charge_point_id FROM chargers
+                    WHERE charge_point_id IS NOT NULL AND deleted_at IS NULL
+                )
+                """
+            ).rowcount
+        return {"sessions": sessions, "meter_readings": readings, "snapshots": snapshots}
+
     def _ensure_active_charger(
         self,
         conn: sqlite3.Connection,

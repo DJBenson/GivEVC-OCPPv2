@@ -133,6 +133,11 @@ body:not(.is-admin) .admin-only { display:none !important; }
   font-size:13px; word-break:break-all;
 }
 .credential-label { font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:800; letter-spacing:.08em; margin-bottom:4px; }
+.credential-row { display:flex; align-items:flex-start; gap:8px; }
+.credential-row .credential-box { flex:1; min-width:0; }
+.btn-copy { flex-shrink:0; padding:6px 10px; font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:7px; color:var(--muted); cursor:pointer; transition:all .15s; white-space:nowrap; }
+.btn-copy:hover { border-color:var(--teal); color:var(--teal); }
+.btn-copy.copied { border-color:var(--ok); color:var(--ok); }
 .onboarding-modal-backdrop {
   position:fixed; inset:0; background:rgba(10,12,16,.55); z-index:250;
   display:none; align-items:center; justify-content:center; padding:20px;
@@ -145,6 +150,7 @@ body:not(.is-admin) .admin-only { display:none !important; }
 .onboarding-modal h3 { font-size:20px; margin-bottom:8px; }
 .onboarding-modal p { color:var(--muted); margin-bottom:16px; }
 .account-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.account-grid-3 { grid-template-columns:1fr 1fr 1fr; }
 .account-panel {
   border:1px solid var(--border); border-radius:8px; padding:16px; background:var(--surface);
 }
@@ -251,15 +257,35 @@ body:not(.is-admin) .admin-only { display:none !important; }
 .nav-brand-sub { font-size: 10px; color: rgba(255,255,255,.4); letter-spacing: 1px; }
 
 .nav-status {
-  margin: 12px 16px; padding: 10px 14px; border-radius: 8px;
+  margin: 12px 16px 0; padding: 10px 14px; border-radius: 8px;
   background: rgba(255,255,255,.05); display: flex; align-items: center; gap: 8px;
+  position: relative;
 }
+.nav-status.has-multiple { cursor: pointer; user-select: none; }
+.nav-status.has-multiple:hover { background: rgba(255,255,255,.09); }
+.nav-status-chevron { margin-left: auto; opacity: .45; transition: transform .2s; flex-shrink: 0; }
+.nav-status.open .nav-status-chevron { transform: rotate(180deg); }
+.nav-status-dropdown {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 200;
+  background: var(--nav-bg); border: 1px solid rgba(255,255,255,.12); border-radius: 8px;
+  overflow: hidden; display: none; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.nav-status.open .nav-status-dropdown { display: block; }
+.nav-status-option {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  cursor: pointer; font-size: 12px; color: rgba(255,255,255,.75);
+  transition: background .12s;
+}
+.nav-status-option:hover { background: rgba(255,255,255,.08); }
+.nav-status-option.active { background: rgba(255,255,255,.06); color: #fff; }
+.nav-status-option .ns-name { font-weight: 700; font-size: 13px; color: #fff; display: block; }
+.nav-status-option .ns-serial { color: rgba(255,255,255,.45); font-size: 11px; }
 .status-indicator {
   width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0;
   box-shadow: 0 0 0 3px rgba(102,187,106,.2);
 }
 .status-indicator.offline { background: var(--err); box-shadow: 0 0 0 3px rgba(239,83,80,.2); }
-.status-text { font-size: 12px; color: rgba(255,255,255,.7); }
+.status-text { font-size: 12px; color: rgba(255,255,255,.7); flex: 1; min-width: 0; }
 .status-text strong { color: #fff; font-size: 13px; display: block; }
 
 .nav-links { flex: 1; padding: 8px 0; overflow-y: auto; }
@@ -783,6 +809,7 @@ canvas { width: 100% !important; display: block; }
   .general-grid .span2 { grid-column: span 1; }
   .schedule-layout { grid-template-columns: 1fr; }
   .account-grid { grid-template-columns: 1fr; }
+  .account-grid-3 { grid-template-columns: 1fr; }
   .admin-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
@@ -914,12 +941,14 @@ canvas { width: 100% !important; display: block; }
     </div>
   </div>
 
-  <div class="nav-status">
+  <div class="nav-status" id="nav-status" onclick="toggleChargerDropdown(event)">
     <div class="status-indicator" id="status-dot"></div>
     <div class="status-text">
       <strong id="status-text">ONLINE</strong>
       <span id="status-serial">EV Charger</span>
     </div>
+    <svg class="nav-status-chevron" id="nav-status-chevron" style="display:none" viewBox="0 0 10 6" width="10" height="6" fill="rgba(255,255,255,.6)"><path d="M0 0l5 6 5-6z"/></svg>
+    <div class="nav-status-dropdown" id="nav-status-dropdown"></div>
   </div>
 
   <div class="nav-links">
@@ -1673,7 +1702,7 @@ canvas { width: 100% !important; display: block; }
 
       <!-- Security -->
       <div class="subpage" id="account-sub-security">
-        <div class="account-grid">
+        <div class="account-grid account-grid-3">
           <div class="account-panel">
             <div class="api-key-panel-head">
               <h4>Change Password</h4>
@@ -1688,6 +1717,14 @@ canvas { width: 100% !important; display: block; }
               <button id="totp-action-button" class="btn btn-teal btn-sm" type="button" onclick="openTotpActionModal()">Enable 2FA</button>
             </div>
             <div id="totp-security-status" class="security-status">Checking status...</div>
+          </div>
+
+          <div class="account-panel" id="delete-account-panel">
+            <div class="api-key-panel-head">
+              <h4>Delete Account</h4>
+              <button class="btn btn-danger btn-sm" type="button" onclick="deleteOwnAccount()">Delete Account</button>
+            </div>
+            <div class="security-status">Permanently delete your account and all associated data. This cannot be undone.</div>
           </div>
         </div>
         <div id="account-status" class="auth-error"></div>
@@ -1922,6 +1959,12 @@ canvas { width: 100% !important; display: block; }
             <button class="btn btn-teal btn-sm" type="button" onclick="adminForceRepushSchedules()">Force Re-push All Schedules</button>
             <div id="admin-repush-status" class="auth-error" style="margin-top:8px"></div>
           </div>
+          <div class="account-panel">
+            <h4>Data Maintenance</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Remove charging sessions, meter readings, and state snapshots that belong to deleted or unrecognised chargers.</p>
+            <button class="btn btn-outline btn-sm" type="button" onclick="adminPurgeOrphanedData()">Purge Orphaned Data</button>
+            <div id="admin-purge-status" style="margin-top:8px;font-size:13px"></div>
+          </div>
           <div class="account-panel" id="admin-updates-panel" style="display:none">
             <h4>Updates</h4>
             <div id="admin-stats-updates" style="color:var(--muted);font-size:13px">Loading…</div>
@@ -1948,11 +1991,17 @@ canvas { width: 100% !important; display: block; }
     <div style="display:grid;gap:12px;margin-bottom:18px">
       <div>
         <div class="credential-label">OCPP endpoint</div>
-        <div id="onboarding-endpoint" class="credential-box">—</div>
+        <div class="credential-row">
+          <div id="onboarding-endpoint" class="credential-box">—</div>
+          <button class="btn-copy" type="button" onclick="copyCredential('onboarding-endpoint', this)">Copy</button>
+        </div>
       </div>
       <div>
         <div class="credential-label">OCPP password</div>
-        <div id="onboarding-password" class="credential-box">—</div>
+        <div class="credential-row">
+          <div id="onboarding-password" class="credential-box">—</div>
+          <button class="btn-copy" type="button" onclick="copyCredential('onboarding-password', this)">Copy</button>
+        </div>
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
@@ -2014,11 +2063,17 @@ canvas { width: 100% !important; display: block; }
       <div class="setup-secret">
         <div>
           <div class="credential-label">Setup Key</div>
-          <div id="totp-secret" class="credential-box">—</div>
+          <div class="credential-row">
+            <div id="totp-secret" class="credential-box">—</div>
+            <button class="btn-copy" type="button" onclick="copyCredential('totp-secret', this)">Copy</button>
+          </div>
         </div>
         <div>
           <div class="credential-label">Authenticator URI</div>
-          <div id="totp-uri" class="credential-box">—</div>
+          <div class="credential-row">
+            <div id="totp-uri" class="credential-box">—</div>
+            <button class="btn-copy" type="button" onclick="copyCredential('totp-uri', this)">Copy</button>
+          </div>
         </div>
       </div>
       <div class="form-field">
@@ -2097,7 +2152,10 @@ canvas { width: 100% !important; display: block; }
     <p>Store this key now. It will not be shown again.</p>
     <div class="api-key-secret">
       <div class="credential-label">New API Key</div>
-      <div id="api-key-created-value" class="credential-box">—</div>
+      <div class="credential-row">
+        <div id="api-key-created-value" class="credential-box">—</div>
+        <button class="btn-copy" type="button" onclick="copyCredential('api-key-created-value', this)">Copy</button>
+      </div>
     </div>
     <div class="form-actions" style="margin-top:16px">
       <button class="btn btn-teal" type="button" onclick="closeApiKeyCreatedModal()">Done</button>
@@ -2694,6 +2752,49 @@ function renderChargerList() {
   const list = document.getElementById('charger-list');
   if (!list) return;
   list.innerHTML = renderChargerItems(_authState.chargers || []);
+  renderNavChargerDropdown();
+}
+
+function renderNavChargerDropdown() {
+  const chargers = _authState.chargers || [];
+  const statusEl = document.getElementById('nav-status');
+  const chevron = document.getElementById('nav-status-chevron');
+  const dropdown = document.getElementById('nav-status-dropdown');
+  if (!statusEl || !dropdown) return;
+  const multi = chargers.length > 1;
+  statusEl.classList.toggle('has-multiple', multi);
+  if (chevron) chevron.style.display = multi ? '' : 'none';
+  if (!multi) { dropdown.innerHTML = ''; return; }
+  dropdown.innerHTML = chargers.map(c => {
+    const online = chargerIsOnline(c);
+    const rawName = c.display_name || c.charge_point_id || 'EV Charger';
+    const rawSerial = c.serial || c.charge_point_id || '';
+    const name = escapeHtml(rawName);
+    const serial = rawSerial && rawSerial !== rawName ? escapeHtml(rawSerial) : '';
+    return `<div class="nav-status-option${c.active ? ' active' : ''}" onclick="navSwitchCharger(event,'${escapeJs(c.id)}')">
+      <div class="status-indicator${online ? '' : ' offline'}" style="width:7px;height:7px;flex-shrink:0"></div>
+      <div><span class="ns-name">${name}</span>${serial ? `<span class="ns-serial">${serial}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleChargerDropdown(e) {
+  const chargers = _authState.chargers || [];
+  if (chargers.length <= 1) return;
+  const statusEl = document.getElementById('nav-status');
+  if (!statusEl) return;
+  const isOpen = statusEl.classList.toggle('open');
+  if (isOpen) {
+    const close = (ev) => { if (!statusEl.contains(ev.target)) { statusEl.classList.remove('open'); document.removeEventListener('click', close); } };
+    setTimeout(() => document.addEventListener('click', close), 0);
+  }
+}
+
+async function navSwitchCharger(e, chargerId) {
+  e.stopPropagation();
+  document.getElementById('nav-status')?.classList.remove('open');
+  if (_authState.chargers.find(c => c.id === chargerId)?.active) return;
+  await switchCharger(chargerId);
 }
 
 function renderChargerItems(chargers) {
@@ -2772,8 +2873,12 @@ async function refreshChargerPageData() {
   const controller = new AbortController();
   _chargerPageRefreshAbort = controller;
   try {
-    const data = await apiJson('/api/chargers', { signal: controller.signal });
-    _authState.chargers = data.chargers || [];
+    const [chargerData, sessionData] = await Promise.all([
+      apiJson('/api/chargers', { signal: controller.signal }),
+      apiJson('/api/onboarding', { signal: controller.signal }).catch(() => null),
+    ]);
+    _authState.chargers = chargerData.chargers || [];
+    if (sessionData) _authState.onboarding_sessions = sessionData.onboarding_sessions || [];
     renderChargerList();
     renderChargerManager();
   } catch (err) {
@@ -2906,6 +3011,22 @@ async function loadAccountSecurityPage() {
     set('account-status', err.message || 'Could not load account security');
   }
   loadApiKeys();
+}
+
+async function deleteOwnAccount() {
+  const confirmed = await appConfirm({
+    title: 'Delete Account',
+    message: 'This will permanently delete your account, all chargers, charging history, and settings. This cannot be undone.',
+    confirmText: 'Delete My Account',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  try {
+    await apiJson('/api/account/self', { method: 'DELETE' });
+    window.location.reload();
+  } catch (err) {
+    await appAlert('Delete Failed', err.message || 'Could not delete account', 'danger');
+  }
 }
 
 function clearAccountForms() {
@@ -3903,6 +4024,30 @@ async function adminForceRepushSchedules() {
   try {
     const d = await apiJson('/api/admin/schedules/force-repush', { method: 'POST' });
     const msg = `Done: ${d.succeeded} pushed, ${d.failed} failed, ${d.offline_flagged} offline (will correct on reconnect)`;
+    if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; }
+    loadAdminStats();
+  } catch (err) {
+    if (status) { status.textContent = err.message || 'Failed'; status.style.color = 'var(--err)'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function adminPurgeOrphanedData() {
+  const btn = document.querySelector('[onclick="adminPurgeOrphanedData()"]');
+  const status = document.getElementById('admin-purge-status');
+  const confirmed = await appConfirm({
+    title: 'Purge Orphaned Data',
+    message: 'This will permanently delete charging sessions, meter readings, and state snapshots for chargers that have been deleted or are unrecognised. This cannot be undone.',
+    confirmText: 'Purge',
+    variant: 'danger',
+  });
+  if (!confirmed) return;
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = '';
+  try {
+    const d = await apiJson('/api/admin/purge-orphaned-data', { method: 'POST' });
+    const msg = `Purged: ${d.sessions} session(s), ${d.meter_readings} meter reading(s), ${d.snapshots} snapshot(s)`;
     if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; }
     loadAdminStats();
   } catch (err) {
@@ -6271,6 +6416,16 @@ function firmwareVersionParts(version) {
   if (!version) return [];
   const tail = String(version).trim().split('_').pop();
   return (tail.match(/\d+/g) || []).map(Number);
+}
+
+function copyCredential(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {});
 }
 
 function escapeHtml(value) {

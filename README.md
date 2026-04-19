@@ -255,7 +255,7 @@ Go to **Settings → Firmware** to view the installed version, browse available 
 
 ### Account → Chargers
 
-Add chargers via onboarding, switch the active charger, or remove chargers from your account.
+Add chargers via onboarding, switch the active charger, or remove chargers from your account. When multiple chargers are registered, the charger status block in the sidebar becomes a dropdown allowing quick switching between chargers without leaving the current page. Deleting a charger immediately disconnects it from the OCPP server.
 
 ### Account → Security
 
@@ -270,6 +270,8 @@ Add chargers via onboarding, switch the active charger, or remove chargers from 
 Once enabled, every login requires a TOTP code after password entry. To disable, you need both your current password and a valid OTP.
 
 Admins can reset another user's 2FA from the admin panel.
+
+**Delete Account** — permanently deletes your account, all chargers, charging history, schedules, RFID tags, API keys, and sessions. Requires confirmation. Immediately logs you out. Not available to the demo account.
 
 ### Account → API Keys
 
@@ -343,6 +345,22 @@ Real-time portal statistics (demo account excluded):
 | Last DST Correction Run | Timestamp of last automatic correction job |
 
 **Force Re-push All Schedules** — immediately re-pushes the active schedule to all online chargers (max 10 concurrent). Offline chargers are flagged and corrected on next reconnect. Results show how many succeeded, failed, and were flagged offline.
+
+**Purge Orphaned Data** — removes charging sessions, meter readings, and charger state snapshots that belong to deleted or unrecognised chargers. Requires confirmation. Reports counts of each table purged.
+
+### Updates
+
+When running as a standalone Docker container, the portal checks GitHub for new releases every 6 hours. When an update is available, an amber banner appears at the bottom of the sidebar; clicking it takes you to Admin → Statistics → Updates where you can see the latest version and a link to the release notes.
+
+The update channel can be set to **Stable** (default) or **Beta** (includes pre-releases). Changing the channel triggers an immediate re-check.
+
+> **Note:** The portal cannot update itself. To apply an update, pull the new image and recreate the container:
+> ```bash
+> docker compose pull && docker compose up -d
+> ```
+> For hands-off automatic updates, [Watchtower](https://containrrr.dev/watchtower/) can monitor the image and restart the container when a new version is published.
+
+This feature is disabled when running as a Home Assistant add-on — HA's own update mechanism handles add-on version management.
 
 ---
 

@@ -752,6 +752,15 @@ def build_web_app(
             return _json_response({"error": "API key not found"}, status=404)
         return _json_response({"ok": True, "keys": auth_store.list_api_keys(user.id)})
 
+    async def api_account_delete_self(request: web.Request) -> web.Response:
+        user = _require_user(request)
+        if user.is_demo:
+            return _json_response({"error": "Account deletion is disabled for the demo account"}, status=403)
+        auth_store.delete_user(user.id)
+        response = _json_response({"ok": True})
+        response.del_cookie(SESSION_COOKIE, path="/")
+        return response
+
     # ── REST: first-pass multi-user charger onboarding ────────────────────
     async def api_list_chargers(request: web.Request) -> web.Response:
         user = _require_user(request)
@@ -762,8 +771,11 @@ def build_web_app(
         if user.is_demo:
             return _json_response({"error": "Charger deletion is disabled for the demo account"}, status=403)
         charger_id = str(request.match_info["id"])
+        existing = next((c for c in auth_store.list_chargers(user.id) if c["id"] == charger_id), None)
         if not auth_store.delete_charger(user.id, charger_id):
             return _json_response({"error": "Charger not found"}, status=404)
+        if ocpp_server is not None and existing and existing.get("charge_point_id"):
+            asyncio.ensure_future(ocpp_server.kick_charge_point(existing["charge_point_id"]))
         return _json_response({"ok": True, "chargers": _chargers_for_user(user.id)})
 
     async def api_switch_charger(request: web.Request) -> web.Response:
@@ -1024,6 +1036,15 @@ def build_web_app(
             "update_notifications_enabled": not _RUNNING_UNDER_HA,
             "channel": auth_store.get_update_channel(),
         })
+
+    async def api_admin_orphaned_data_counts(request: web.Request) -> web.Response:
+        _require_admin(request)
+        return _json_response(auth_store.count_orphaned_data())
+
+    async def api_admin_purge_orphaned_data(request: web.Request) -> web.Response:
+        _require_admin(request)
+        result = auth_store.purge_orphaned_data()
+        return _json_response({"ok": True, **result})
 
     async def api_admin_set_update_channel(request: web.Request) -> web.Response:
         _require_admin(request)
@@ -1505,6 +1526,7 @@ def build_web_app(
     app.router.add_get("/api/account/api-keys", api_account_api_keys)
     app.router.add_post("/api/account/api-keys", api_account_create_api_key)
     app.router.add_delete("/api/account/api-keys/{id}", api_account_revoke_api_key)
+    app.router.add_delete("/api/account/self", api_account_delete_self)
     app.router.add_get("/api/chargers", api_list_chargers)
     app.router.add_delete("/api/chargers/{id}", api_delete_charger)
     app.router.add_post("/api/chargers/{id}/switch", api_switch_charger)
@@ -1528,6 +1550,8 @@ def build_web_app(
     app.router.add_post("/api/admin/schedules/force-repush", api_admin_force_repush_schedules)
     app.router.add_get("/api/admin/update-check", api_admin_update_check)
     app.router.add_post("/api/admin/update-channel", api_admin_set_update_channel)
+    app.router.add_get("/api/admin/orphaned-data-counts", api_admin_orphaned_data_counts)
+    app.router.add_post("/api/admin/purge-orphaned-data", api_admin_purge_orphaned_data)
     app.router.add_get("/api/state", api_state)
     app.router.add_get("/api/energy", api_energy)
     app.router.add_get("/api/power", api_power)
