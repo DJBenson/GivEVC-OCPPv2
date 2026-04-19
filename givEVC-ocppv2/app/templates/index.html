@@ -152,8 +152,9 @@ body:not(.is-admin) .admin-only { display:none !important; }
 .account-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .account-grid-3 { grid-template-columns:1fr 1fr 1fr; }
 .account-panel {
-  border:1px solid var(--border); border-radius:8px; padding:16px; background:var(--surface);
+  border:1px solid var(--border); border-radius:8px; padding:16px; background:var(--surface); position:relative;
 }
+.status-bottom-right { position:absolute; bottom:12px; right:14px; font-size:12px; }
 .account-panel h4 { font-size:15px; margin-bottom:10px; }
 .security-status { color:var(--muted); font-size:13px; margin-bottom:12px; }
 .setup-secret { display:grid; gap:10px; margin:12px 0; }
@@ -1957,14 +1958,14 @@ canvas { width: 100% !important; display: block; }
             <h4>Schedule Actions</h4>
             <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Re-push active schedules to all online chargers. Offline chargers will receive the updated schedule on next reconnect.</p>
             <button class="btn btn-teal btn-sm" type="button" onclick="adminForceRepushSchedules()">Force Re-push All Schedules</button>
-            <div id="admin-repush-status" class="auth-error" style="margin-top:8px"></div>
+            <div id="admin-repush-status" class="auth-error status-bottom-right"></div>
           </div>
           <div class="account-panel">
             <h4>Data Maintenance</h4>
             <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Remove charging sessions, meter readings, and state snapshots that belong to deleted or unrecognised chargers.</p>
             <div id="admin-orphan-counts" style="color:var(--muted);font-size:13px;margin-bottom:12px">Loading…</div>
             <button class="btn btn-outline btn-sm" type="button" onclick="adminPurgeOrphanedData()">Purge Orphaned Data</button>
-            <div id="admin-purge-status" style="margin-top:8px;font-size:13px"></div>
+            <div id="admin-purge-status" class="status-bottom-right"></div>
           </div>
           <div class="account-panel" id="admin-updates-panel" style="display:none">
             <h4>Updates</h4>
