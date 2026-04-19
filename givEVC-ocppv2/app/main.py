@@ -232,6 +232,8 @@ def build_web_app(
 
     def _apply_live_connection_to_state(state: dict, connection: dict | None) -> dict:
         if not connection:
+            state["connected"] = False
+            state["connection_state"] = "disconnected"
             return state
         connection_state = str(connection.get("connection_state") or "connected")
         state["connected"] = connection_state == "connected"
@@ -319,7 +321,10 @@ def build_web_app(
                 state = _state_to_dict(coordinator.data)
                 snapshot = coordinator.charger_snapshot_for(selected_charge_point_id)
                 if snapshot:
+                    in_memory_progress = state.get("firmware_transfer_progress")
                     state.update(snapshot)
+                    if in_memory_progress is not None and snapshot.get("firmware_transfer_progress") is None:
+                        state["firmware_transfer_progress"] = in_memory_progress
                 state.update(_merge_live_session_into_stats(state, session_stats))
                 return _apply_live_connection_to_state(state, live_connection)
 
@@ -1023,6 +1028,27 @@ def build_web_app(
         stats["dst_last_run"] = auth_store.get_system_setting("dst_last_run")
         return _json_response(stats)
 
+    async def api_admin_server_details(request: web.Request) -> web.Response:
+        _require_admin(request)
+        portal_url = str(request.url.origin())
+        ocpp_url = _ocpp_public_origin(request)
+        # Parse host and port from the OCPP URL
+        ocpp_parts = ocpp_url.rsplit(":", 1)
+        ocpp_port = ocpp_parts[1] if len(ocpp_parts) == 2 else str(OCPP_PORT)
+        firmware_host = coordinator.resolve_firmware_server_host(
+            request_host=request.headers.get("X-Forwarded-Host") or request.host,
+        ) or request.host.split(":")[0]
+        firmware_port = coordinator.firmware_public_port
+        firmware_base_url = f"ftp://{firmware_host}:{firmware_port}/"
+        return _json_response({
+            "portal_url": portal_url,
+            "ocpp_url": ocpp_url,
+            "ocpp_port": int(ocpp_port) if ocpp_port.isdigit() else OCPP_PORT,
+            "firmware_host": firmware_host,
+            "firmware_port": firmware_port,
+            "firmware_base_url": firmware_base_url,
+        })
+
     async def api_admin_force_repush_schedules(request: web.Request) -> web.Response:
         _require_admin(request)
         result = await coordinator.async_force_repush_all_schedules(auth_store=auth_store)
@@ -1073,10 +1099,10 @@ def build_web_app(
         q: asyncio.Queue = asyncio.Queue(maxsize=20)
         coordinator.add_sse_queue(q)
 
-        # Send current state immediately on connect
-        await resp.write(f"data: {json.dumps(_state_for_user(user))}\n\n".encode())
-
         try:
+            # Send current state immediately on connect
+            await resp.write(f"data: {json.dumps(_state_for_user(user))}\n\n".encode())
+
             while True:
                 try:
                     await asyncio.wait_for(q.get(), timeout=25)
@@ -1084,7 +1110,7 @@ def build_web_app(
                 except asyncio.TimeoutError:
                     # Keepalive comment so proxies don't close the connection
                     await resp.write(b": keepalive\n\n")
-        except (ConnectionResetError, asyncio.CancelledError):
+        except (ConnectionResetError, ConnectionError, asyncio.CancelledError):
             pass
         finally:
             coordinator.remove_sse_queue(q)
@@ -1547,6 +1573,7 @@ def build_web_app(
     app.router.add_get("/api/admin/demo", api_admin_demo_settings)
     app.router.add_post("/api/admin/demo", api_admin_set_demo_mode)
     app.router.add_get("/api/admin/stats", api_admin_stats)
+    app.router.add_get("/api/admin/server-details", api_admin_server_details)
     app.router.add_post("/api/admin/schedules/force-repush", api_admin_force_repush_schedules)
     app.router.add_get("/api/admin/update-check", api_admin_update_check)
     app.router.add_post("/api/admin/update-channel", api_admin_set_update_channel)
@@ -2718,8 +2745,13 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
 
     def _firmware_event(event: dict) -> None:
-        _LOGGER.debug("Firmware: %s", event)
-        loop.call_soon_threadsafe(coordinator.record_firmware_transfer_event, event)
+        _noisy = {"control_frame_sent", "control_frame_received", "chunk_sent"}
+        _log = _LOGGER.debug if event.get("event") in _noisy else _LOGGER.info
+        _log("Firmware event: %s", event.get("event"))
+        try:
+            loop.call_soon_threadsafe(coordinator.record_firmware_transfer_event, event)
+        except Exception:
+            _LOGGER.exception("Failed to dispatch firmware event to event loop")
 
     firmware.set_event_callback(_firmware_event)
 

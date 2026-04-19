@@ -154,7 +154,8 @@ body:not(.is-admin) .admin-only { display:none !important; }
 .account-panel {
   border:1px solid var(--border); border-radius:8px; padding:16px; background:var(--surface); position:relative;
 }
-.status-bottom-right { position:absolute; bottom:12px; right:14px; font-size:12px; }
+.panel-bottom-right { position:absolute; bottom:12px; right:14px; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+.account-panel:has(.panel-bottom-right) { min-height:90px; padding-bottom:48px; }
 .account-panel h4 { font-size:15px; margin-bottom:10px; }
 .security-status { color:var(--muted); font-size:13px; margin-bottom:12px; }
 .setup-secret { display:grid; gap:10px; margin:12px 0; }
@@ -1880,50 +1881,50 @@ canvas { width: 100% !important; display: block; }
         <div class="admin-grid">
           <div class="account-panel">
             <h4>Account Registration</h4>
-            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Allow new users to register accounts.</p>
-            <div class="toggle-row">
+            <p style="color:var(--muted);font-size:13px">Allow new users to register accounts.</p>
+            <div class="panel-bottom-right">
+              <div id="admin-registration-status" class="auth-error" style="font-size:12px"></div>
               <label class="toggle">
                 <input type="checkbox" id="admin-registration-toggle" onchange="setAdminRegistrationEnabled(this.checked)">
                 <span class="toggle-track"></span>
               </label>
             </div>
-            <div id="admin-registration-status" class="auth-error"></div>
           </div>
 
           <div class="account-panel">
             <h4>Initial Email Validation</h4>
-            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Require new accounts to confirm a 6 digit email code before first login.</p>
-            <div class="toggle-row">
+            <p style="color:var(--muted);font-size:13px">Require new accounts to confirm a 6 digit email code before first login.</p>
+            <div class="panel-bottom-right">
+              <div id="admin-email-validation-global-status" class="auth-error" style="font-size:12px"></div>
               <label class="toggle">
                 <input type="checkbox" id="admin-email-validation-toggle" onchange="setAdminEmailValidationEnabled(this.checked)">
                 <span class="toggle-track"></span>
               </label>
             </div>
-            <div id="admin-email-validation-global-status" class="auth-error"></div>
           </div>
 
           <div class="account-panel">
             <h4>Public API</h4>
-            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Allow bearer-token access to the public /api/v1 endpoints. Disable to make the public API unavailable.</p>
-            <div class="toggle-row">
+            <p style="color:var(--muted);font-size:13px">Allow bearer-token access to the public /api/v1 endpoints. Disable to make the public API unavailable.</p>
+            <div class="panel-bottom-right">
+              <div id="admin-public-api-status" class="auth-error" style="font-size:12px"></div>
               <label class="toggle">
                 <input type="checkbox" id="admin-public-api-toggle" onchange="setAdminPublicApiEnabled(this.checked)">
                 <span class="toggle-track"></span>
               </label>
             </div>
-            <div id="admin-public-api-status" class="auth-error"></div>
           </div>
 
           <div class="account-panel">
             <h4>Demo Mode</h4>
-            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Seed the demo user and demo charger data. Disable for normal installs.</p>
-            <div class="toggle-row">
+            <p style="color:var(--muted);font-size:13px">Seed the demo user and demo charger data. Disable for normal installs.</p>
+            <div class="panel-bottom-right">
+              <div id="admin-demo-status" class="auth-error" style="font-size:12px"></div>
               <label class="toggle">
                 <input type="checkbox" id="admin-demo-toggle" onchange="setAdminDemoEnabled(this.checked)">
                 <span class="toggle-track"></span>
               </label>
             </div>
-            <div id="admin-demo-status" class="auth-error"></div>
           </div>
 
           <div class="account-panel">
@@ -1958,14 +1959,18 @@ canvas { width: 100% !important; display: block; }
             <h4>Schedule Actions</h4>
             <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Re-push active schedules to all online chargers. Offline chargers will receive the updated schedule on next reconnect.</p>
             <button class="btn btn-teal btn-sm" type="button" onclick="adminForceRepushSchedules()">Force Re-push All Schedules</button>
-            <div id="admin-repush-status" class="auth-error status-bottom-right"></div>
+            <div id="admin-repush-status" class="auth-error" style="margin-top:8px"></div>
           </div>
           <div class="account-panel">
             <h4>Data Maintenance</h4>
             <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Remove charging sessions, meter readings, and state snapshots that belong to deleted or unrecognised chargers.</p>
             <div id="admin-orphan-counts" style="color:var(--muted);font-size:13px;margin-bottom:12px">Loading…</div>
             <button class="btn btn-outline btn-sm" type="button" onclick="adminPurgeOrphanedData()">Purge Orphaned Data</button>
-            <div id="admin-purge-status" class="status-bottom-right"></div>
+            <div id="admin-purge-status" style="margin-top:8px;font-size:13px"></div>
+          </div>
+          <div class="account-panel">
+            <h4>Server Details</h4>
+            <div id="admin-server-details" style="color:var(--muted);font-size:13px">Loading…</div>
           </div>
           <div class="account-panel" id="admin-updates-panel" style="display:none">
             <h4>Updates</h4>
@@ -2184,7 +2189,7 @@ canvas { width: 100% !important; display: block; }
 <div id="firmware-progress-backdrop" class="app-modal-backdrop" aria-hidden="true">
   <div class="app-modal firmware-progress-modal" role="dialog" aria-modal="true" aria-labelledby="firmware-progress-title" aria-describedby="firmware-progress-status">
     <div class="app-modal-head">
-      <div class="app-modal-icon">↓</div>
+      <div id="firmware-progress-icon" class="app-modal-icon">↓</div>
       <div>
         <div id="firmware-progress-title" class="app-modal-title">Firmware Transfer</div>
         <div id="firmware-progress-status" class="app-modal-message firmware-progress-status">Preparing firmware…</div>
@@ -2194,10 +2199,10 @@ canvas { width: 100% !important; display: block; }
       <div id="firmware-progress-file">Firmware file: —</div>
       <div id="firmware-progress-ocpp">Charger status: —</div>
     </div>
-    <div class="firmware-progress-bar" aria-hidden="true">
+    <div id="firmware-progress-bar-wrap" class="firmware-progress-bar" aria-hidden="true">
       <div id="firmware-progress-fill" class="firmware-progress-fill"></div>
     </div>
-    <div class="firmware-progress-detail">
+    <div id="firmware-progress-detail" class="firmware-progress-detail">
       <span id="firmware-progress-chunks">Waiting for charger download request</span>
       <span id="firmware-progress-percent">0%</span>
     </div>
@@ -3977,7 +3982,22 @@ function activateAdminSub(name) {
   adminPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('admin-sub-' + subName)?.classList.add('active');
   adminPage.querySelector(`.pill-tab[data-admin-sub="${subName}"]`)?.classList.add('active');
-  if (subName === 'statistics') { loadAdminStats(); loadAdminUpdateCheck(); loadOrphanedCounts(); }
+  if (subName === 'statistics') { loadAdminStats(); loadAdminUpdateCheck(); loadOrphanedCounts(); loadAdminServerDetails(); }
+}
+
+async function loadAdminServerDetails() {
+  const el = document.getElementById('admin-server-details');
+  if (!el) return;
+  try {
+    const d = await apiJson('/api/admin/server-details');
+    el.innerHTML = [
+      `<div style="margin-bottom:6px"><span style="color:var(--text);font-weight:600">Portal URL</span><br>${escapeHtml(d.portal_url)}</div>`,
+      `<div style="margin-bottom:6px"><span style="color:var(--text);font-weight:600">OCPP URL</span><br>${escapeHtml(d.ocpp_url)} <span style="color:var(--muted)">(port ${d.ocpp_port})</span></div>`,
+      `<div><span style="color:var(--text);font-weight:600">Firmware (FTP)</span><br>${escapeHtml(d.firmware_host)} <span style="color:var(--muted)">(port ${d.firmware_port})</span><br><span style="font-family:monospace;font-size:12px">${escapeHtml(d.firmware_base_url)}</span></div>`,
+    ].join('');
+  } catch (err) {
+    el.textContent = 'Could not load server details.';
+  }
 }
 
 async function loadAdminStats() {
@@ -6307,7 +6327,7 @@ function renderFirmwareProgress(progress, state = _state, fallback = {}) {
   const chunksTotal = Number(progress?.chunks_total || 0);
   const bytesSent = Number(progress?.bytes_sent || 0);
   const bytesTotal = Number(progress?.bytes_total || 0);
-  const isError = !!progress?.error || String(status).toLowerCase().includes('failed');
+  const isError = !!progress?.error || String(status).toLowerCase().includes('failed') || ['Failed', 'Cancelled'].includes(state?.firmware_update_state);
   const transferEvents = new Set(['download_started', 'request_received', 'control_frame_sent', 'control_frame_received', 'chunk_sent', 'ocpp_downloading']);
   const restartingEvents = new Set(['applying', 'restarting', 'ocpp_installing']);
   const terminalEvents = new Set(['installed', 'version_mismatch', 'firmware_status_failed', 'update_request_failed', 'transfer_cancelled']);
@@ -6315,26 +6335,49 @@ function renderFirmwareProgress(progress, state = _state, fallback = {}) {
   const isRestarting = restartingEvents.has(eventName) || ['Downloaded', 'Installing'].includes(state?.firmware_update_state);
   const isTerminal = terminalEvents.has(eventName) || ['Installed', 'Failed', 'Cancelled'].includes(state?.firmware_update_state);
 
+  // Phase classification
+  const phaseEvents = new Set(['applying', 'restarting', 'ocpp_installing', 'installed', 'version_mismatch', 'firmware_status_failed', 'update_request_failed']);
+  const isInstallPhase = isRestarting || (phaseEvents.has(eventName) && eventName !== 'installed') || ['Downloaded', 'Installing'].includes(state?.firmware_update_state);
+  const isDone = isTerminal && !isError;
+
+  // Title + icon reflect current phase
+  const titleEl = document.getElementById('firmware-progress-title');
+  const iconEl = document.getElementById('firmware-progress-icon');
+  if (titleEl) {
+    if (isDone) titleEl.textContent = 'Firmware Installed';
+    else if (isInstallPhase) titleEl.textContent = 'Installing Firmware';
+    else titleEl.textContent = 'Firmware Transfer';
+  }
+  if (iconEl) {
+    if (isDone) iconEl.textContent = '✓';
+    else if (isInstallPhase) iconEl.textContent = '⟳';
+    else iconEl.textContent = '↓';
+  }
+
   set('firmware-progress-status', status);
   set('firmware-progress-file', `Firmware file: ${filename}`);
   set('firmware-progress-ocpp', `Update state: ${state?.firmware_update_state || state?.firmware_status || 'Waiting'}`);
-  set('firmware-progress-percent', `${Math.round(percent)}%`);
 
-  const fill = document.getElementById('firmware-progress-fill');
-  if (fill) {
-    fill.style.width = `${percent}%`;
-    fill.classList.toggle('err', isError);
+  // Hide the progress bar + detail row during install/reboot phase — show a status-only view
+  const barWrap = document.getElementById('firmware-progress-bar-wrap');
+  const detailRow = document.getElementById('firmware-progress-detail');
+  if (barWrap) barWrap.style.display = isInstallPhase ? 'none' : '';
+  if (detailRow) detailRow.style.display = isInstallPhase ? 'none' : '';
+
+  if (!isInstallPhase) {
+    set('firmware-progress-percent', `${Math.round(percent)}%`);
+    const fill = document.getElementById('firmware-progress-fill');
+    if (fill) {
+      fill.style.width = `${percent}%`;
+      fill.classList.toggle('err', isError);
+    }
+    const chunksText = chunksTotal > 0
+      ? `Chunk ${Math.min(chunksSent, chunksTotal)} of ${chunksTotal}`
+      : bytesTotal > 0
+        ? `${formatBytes(bytesSent)} of ${formatBytes(bytesTotal)}`
+        : 'Waiting for charger download request';
+    set('firmware-progress-chunks', progress?.error ? String(progress.error) : chunksText);
   }
-
-  const phaseEvents = new Set(['applying', 'restarting', 'ocpp_installing', 'installed', 'version_mismatch', 'firmware_status_failed', 'update_request_failed']);
-  const chunksText = phaseEvents.has(eventName)
-    ? status
-    : chunksTotal > 0
-    ? `Chunk ${Math.min(chunksSent, chunksTotal)} of ${chunksTotal}`
-    : bytesTotal > 0
-      ? `${formatBytes(bytesSent)} of ${formatBytes(bytesTotal)}`
-      : 'Waiting for charger download request';
-  set('firmware-progress-chunks', progress?.error ? String(progress.error) : chunksText);
 
   const actionBtn = document.getElementById('firmware-progress-close');
   if (actionBtn) {
@@ -6349,7 +6392,7 @@ function renderFirmwareProgress(progress, state = _state, fallback = {}) {
       actionBtn.textContent = 'Close';
       actionBtn.dataset.action = 'close';
       actionBtn.onclick = closeFirmwareProgressModal;
-      actionBtn.disabled = isRestarting || (active && !isTerminal && !isError);
+      actionBtn.disabled = isInstallPhase && !isDone && !isError;
     }
   }
 }

@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     ports:
       - "${OCPP_BIND:-0.0.0.0}:${OCPP_PORT:-7655}:7655"       # OCPP WebSocket — charger connects here (set OCPP_BIND=127.0.0.1 if behind reverse proxy)
-      - "${FIRMWARE_BIND:-127.0.0.1}:${FIRMWARE_PORT:-9688}:9688"   # Firmware transfer server — localhost only by default
+      - "${FIRMWARE_BIND:-0.0.0.0}:${FIRMWARE_PORT:-9688}:9688"   # Firmware transfer server — localhost only by default
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8099}:8099"        # Web UI — Caddy terminates TLS externally
     environment:
       OCPP_PORT: "7655"

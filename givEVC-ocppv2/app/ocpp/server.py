@@ -193,6 +193,19 @@ class OcppServer:
         stateful = adopted
         selected_active = bool(adopted and candidate_id and candidate_id == active_charge_point_id)
 
+        # If not already the coordinator's active charger, check the auth store — this
+        # charger may be a user's active charger that reconnected while the coordinator's
+        # active slot still points to a previous session (e.g. after a firmware reboot).
+        if not selected_active and adopted and candidate_id and self.auth_store is not None:
+            charger_record = self.auth_store.get_charger_by_charge_point_id(candidate_id)
+            if charger_record:
+                user_active = self.auth_store.get_active_charger(charger_record["user_id"])
+                if user_active and user_active.get("charge_point_id") == candidate_id:
+                    active_session_exists = self.coordinator.data.connected and self.coordinator.data.charge_point_id == candidate_id
+                    if not active_session_exists:
+                        selected_active = True
+                        _LOGGER.info("Promoting %s to active coordinator charger on reconnect", candidate_id)
+
         session_key = candidate_id or ""
         if candidate_id:
             existing = self._sessions.get(candidate_id)

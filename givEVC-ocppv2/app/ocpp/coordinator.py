@@ -127,6 +127,8 @@ class OcppCoordinator:
         self._ocpp_callers: dict[str, Any] = {}
         self._charge_point_command_authorizer: Callable[[str | None], bool] | None = None
         self._firmware_download_locks: dict[str, asyncio.Lock] = {}
+        self._active_firmware_charge_point_id: str | None = None
+        self._live_firmware_state: dict[str, ChargerState] = {}
 
     # ── Persistence ──────────────────────────────────────────────────────
 
@@ -207,7 +209,14 @@ class OcppCoordinator:
 
     def charger_snapshot_for(self, charge_point_id: str | None) -> dict[str, Any] | None:
         charge_point_id = str(charge_point_id or "").strip()
-        if not charge_point_id or self._state_store is None:
+        if not charge_point_id:
+            return None
+        live = self._live_firmware_state.get(charge_point_id)
+        if live is not None:
+            snapshot = _state_to_dict(live)
+            snapshot["charge_point_id"] = charge_point_id
+            return snapshot
+        if self._state_store is None:
             return None
         loader = getattr(self._state_store, "load_charger_state", None)
         if loader is None:
@@ -218,6 +227,8 @@ class OcppCoordinator:
         charge_point_id = str(charge_point_id or "").strip()
         if self._is_selected_charge_point(charge_point_id):
             return self.data
+        if charge_point_id and charge_point_id in self._live_firmware_state:
+            return self._live_firmware_state[charge_point_id]
         state = _state_from_snapshot(self.charger_snapshot_for(charge_point_id) or {})
         if charge_point_id:
             state.charge_point_id = charge_point_id
@@ -571,7 +582,14 @@ class OcppCoordinator:
                 snapshot_state.last_boot_notification = payload
                 snapshot_state.last_seen = datetime.now(UTC)
                 self._mark_firmware_result_from_observed_version(snapshot_state)
-                self._save_charger_snapshot(str(charge_point_id or ""), _state_to_dict(snapshot_state))
+                cpid_str = str(charge_point_id or "")
+                if cpid_str in self._live_firmware_state:
+                    self._live_firmware_state[cpid_str] = snapshot_state
+                self._save_charger_snapshot(cpid_str, _state_to_dict(snapshot_state))
+                self._push_sse()
+                self._live_firmware_state.pop(cpid_str, None)
+                if self._active_firmware_charge_point_id == cpid_str:
+                    self._active_firmware_charge_point_id = None
             else:
                 snapshot = self.charger_snapshot_for(charge_point_id) or {}
                 snapshot_state = _state_from_snapshot(snapshot)
@@ -2237,9 +2255,19 @@ class OcppCoordinator:
             _assert_safe_url(download_url)
             async with aiohttp.ClientSession() as session:
                 async with session.get(download_url, allow_redirects=False) as response:
-                    if response.status != 200:
+                    if response.status in {301, 302, 303, 307, 308}:
+                        redirect_url = str(response.headers.get("Location", ""))
+                        if not redirect_url:
+                            raise RuntimeError("Firmware redirect had no Location header")
+                        _assert_safe_url(redirect_url)
+                        async with session.get(redirect_url, allow_redirects=False) as r2:
+                            if r2.status != 200:
+                                raise RuntimeError(f"Firmware download failed with HTTP {r2.status}")
+                            data = await r2.read()
+                    elif response.status != 200:
                         raise RuntimeError(f"Firmware download failed with HTTP {response.status}")
-                    data = await response.read()
+                    else:
+                        data = await response.read()
         except Exception as err:
             raise RuntimeError(f"Unable to download firmware from {download_url}: {err}") from err
 
@@ -2308,11 +2336,23 @@ class OcppCoordinator:
         progress = dict(state.firmware_transfer_progress or {})
         now = datetime.now(UTC).isoformat()
         event_name = str(event_type or "unknown")
+        _noisy_events = {"control_frame_sent", "control_frame_received", "chunk_sent"}
+        if event_name in _noisy_events:
+            _LOGGER.debug("Firmware transfer event: %s (update_state=%s)", event_name, state.firmware_update_state)
+        else:
+            _LOGGER.info("Firmware transfer event: %s (update_state=%s)", event_name, state.firmware_update_state)
         if state.firmware_update_state in {"Cancelled", "Installed", "Failed"} and event_name not in {"transfer_cancelled"}:
+            _LOGGER.warning("Firmware event %s dropped — update state is %s", event_name, state.firmware_update_state)
+            return
+        _retry_transfer_events = {"connect", "request_received", "control_frame_sent", "control_frame_received", "chunk_sent", "checksum_missing", "checksum_ok", "file_sent", "disconnect", "download_started", "overlapping_request", "socket_timeout"}
+        if state.firmware_update_state in {"Downloaded", "Installing"} and event_name in _retry_transfer_events:
+            if event_name == "disconnect":
+                self._mark_firmware_installing_after_disconnect(state, now=now)
+                state.firmware_transfer_progress = dict(state.firmware_transfer_progress or {})
+                self._persist_charge_point_state(charge_point_id, state, persist=False)
             return
         terminal_errors = {
             "file_not_found",
-            "checksum_missing",
             "checksum_mismatch",
             "chunk_read_error",
             "client_error",
@@ -2419,6 +2459,12 @@ class OcppCoordinator:
                 self._mark_firmware_download_complete(state, filename or progress.get("filename"), now)
             self._mark_firmware_installing_after_disconnect(state, now=now)
             progress = dict(state.firmware_transfer_progress or {})
+        elif event_name == "checksum_missing":
+            # This charger always closes FTP connections without sending checksum ACK —
+            # whether it's a partial session or the final one. Treat as non-fatal; the
+            # subsequent disconnect event drives the Downloaded → Installing transition.
+            self._mark_firmware_download_complete(state, filename or progress.get("filename"), now)
+            progress = dict(state.firmware_transfer_progress or {})
         elif event_name in terminal_errors:
             progress.update(
                 {
@@ -2459,7 +2505,11 @@ class OcppCoordinator:
             )
 
         state.firmware_transfer_progress = progress
-        self._persist_charge_point_state(charge_point_id, state, persist=False)
+        terminal = state.firmware_update_state in {"Installed", "Failed", "Cancelled"}
+        self._persist_charge_point_state(charge_point_id, state, persist=terminal)
+        if terminal and charge_point_id and charge_point_id in self._live_firmware_state:
+            self._live_firmware_state.pop(charge_point_id, None)
+            self._active_firmware_charge_point_id = None
 
     def cancel_firmware_update(self, charge_point_id: str | None = None, reason: str = "Cancelled by user") -> dict[str, Any]:
         """Mark the active firmware transfer as cancelled."""
@@ -2541,6 +2591,8 @@ class OcppCoordinator:
 
         if filename_name and filename_name == Path(str(self.data.firmware_update_target_file or "")).name:
             return self.data.charge_point_id
+        if self._active_firmware_charge_point_id:
+            return self._active_firmware_charge_point_id
         return self.data.charge_point_id
 
     async def async_update_firmware(
@@ -2571,13 +2623,28 @@ class OcppCoordinator:
         try:
             result = await self._ocpp_call("UpdateFirmware", payload, charge_point_id=charge_point_id)
         except Exception as err:
+            err_str = str(err)
+            is_timeout = "timed out" in err_str.lower()
+            if is_timeout:
+                # Charger didn't ACK the OCPP command in time but likely received it
+                # and will start the FTP download. Keep state as Requested so FTP
+                # transfer events are not blocked by the guard in record_firmware_transfer_event.
+                state.firmware_transfer_progress = {
+                    **(state.firmware_transfer_progress or {}),
+                    "active": True,
+                    "event": "update_requested",
+                    "status": "Command sent — waiting for charger to begin download",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+                self._persist_charge_point_state(charge_point_id, state, persist=True)
+                return {"status": "Accepted", "note": "OCPP ack timed out; charger may still proceed"}
             state.firmware_update_state = "Failed"
-            state.firmware_update_failure_reason = str(err)
+            state.firmware_update_failure_reason = err_str
             state.firmware_transfer_progress = {
                 **(state.firmware_transfer_progress or {}),
                 "active": False,
                 "event": "update_request_failed",
-                "error": str(err),
+                "error": err_str,
                 "status": "Update request failed",
                 "updated_at": datetime.now(UTC).isoformat(),
             }
@@ -2593,6 +2660,10 @@ class OcppCoordinator:
 
     def _start_firmware_update_session(self, location: str, *, state: ChargerState | None = None) -> None:
         state = state or self.data
+        cpid = str(state.charge_point_id or "").strip() or None
+        self._active_firmware_charge_point_id = cpid
+        if cpid and not self._is_selected_charge_point(cpid):
+            self._live_firmware_state[cpid] = state
         target_file = state.selected_firmware_file or Path(location).name or None
         state.firmware_status = None
         state.firmware_update_state = "Requested"
@@ -2663,11 +2734,26 @@ class OcppCoordinator:
         state.firmware_transfer_progress = progress
 
     def _mark_firmware_result_from_observed_version(self, state: ChargerState) -> None:
-        if state.firmware_update_state not in {"Downloaded", "Installing", "Installed"}:
+        if state.firmware_update_state not in {"Requested", "Downloading", "Downloaded", "Installing", "Installed"}:
             return
         target = state.firmware_update_target_version
         current = state.firmware_version
+        _LOGGER.info(
+            "Firmware version check: update_state=%s target=%s current=%s match=%s",
+            state.firmware_update_state, target, current,
+            _firmware_version_key(target) == _firmware_version_key(current) if target and current else "n/a",
+        )
         if not target or not current:
+            # No target version recorded — stuck from a timed-out request; clear it
+            if state.firmware_update_state in {"Requested", "Downloading"}:
+                state.firmware_update_state = "Failed"
+                state.firmware_update_failure_reason = "Update request did not complete before charger rebooted"
+                state.firmware_transfer_progress = {
+                    **(state.firmware_transfer_progress or {}),
+                    "active": False,
+                    "event": "stale_cleared",
+                    "status": "Update state cleared on reconnect",
+                }
             return
         progress = dict(state.firmware_transfer_progress or {})
         if _firmware_version_key(target) == _firmware_version_key(current):
