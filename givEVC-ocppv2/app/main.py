@@ -128,6 +128,7 @@ def build_web_app(
     firmware: FirmwareTransferServer,
     ocpp_server: OcppServer | None = None,
     auth_store: AuthStore | None = None,
+    demo_mode_callback=None,
 ) -> web.Application:
     auth_store = auth_store or AuthStore(AUTH_DB_PATH)
     email_sender = EmailSender(
@@ -958,6 +959,8 @@ def build_web_app(
                 "Admin Demo Mode",
                 "enabled" if enabled else "disabled",
             )
+            if demo_mode_callback is not None:
+                await demo_mode_callback(enabled)
         except Exception:
             _LOGGER.exception("Demo mode toggle failed")
             return _json_response({"error": "Could not update demo mode"}, status=500)
@@ -2450,7 +2453,12 @@ async def main() -> None:
 
     auth_store = AuthStore(AUTH_DB_PATH)
     auth_store.seed_startup_data()
-    _LOGGER.info("Startup seed complete — demo account: %s / %s", DEMO_EMAIL, DEMO_PASSWORD)
+    demo_mode_enabled = auth_store.is_demo_mode_enabled()
+    _LOGGER.info(
+        "Demo mode %s%s",
+        "enabled" if demo_mode_enabled else "disabled",
+        f" — demo account: {DEMO_EMAIL} / {DEMO_PASSWORD}" if demo_mode_enabled else "",
+    )
 
     coordinator = OcppCoordinator(
         listen_port=OCPP_PORT,
@@ -2474,8 +2482,34 @@ async def main() -> None:
 
     firmware.set_event_callback(_firmware_event)
 
+    ocpp_scheme = "wss" if os.environ.get("OCPP_TLS", "").lower() in ("1", "true") else "ws"
+    demo_upstream = f"{ocpp_scheme}://127.0.0.1:{OCPP_PORT}"
+    demo_simulator = None
+    demo_task = None
+
+    async def apply_demo_runtime(enabled: bool) -> None:
+        nonlocal demo_simulator, demo_task
+        if enabled:
+            if demo_task is not None and not demo_task.done():
+                return
+            demo_simulator = DemoChargerSimulator(demo_upstream, DEMO_PASSWORD)
+            demo_task = asyncio.create_task(demo_simulator.run_forever(), name="demo-simulator")
+            _LOGGER.info("Demo simulator started → %s/%s", demo_upstream, DEMO_CHARGE_POINT_ID)
+            return
+
+        if demo_simulator is not None:
+            await demo_simulator.stop()
+        if demo_task is not None:
+            demo_task.cancel()
+            try:
+                await demo_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        demo_simulator = None
+        demo_task = None
+
     ocpp_server = OcppServer(coordinator, auth_store=auth_store)
-    web_app = build_web_app(coordinator, firmware, ocpp_server, auth_store)
+    web_app = build_web_app(coordinator, firmware, ocpp_server, auth_store, apply_demo_runtime)
 
     await ocpp_server.start()
     await firmware.start(FIRMWARE_PORT)
@@ -2485,21 +2519,13 @@ async def main() -> None:
     await web.TCPSite(runner, host="0.0.0.0", port=INGRESS_PORT).start()
     _LOGGER.info("Web UI on 0.0.0.0:%s", INGRESS_PORT)
 
-    ocpp_scheme = "wss" if os.environ.get("OCPP_TLS", "").lower() in ("1", "true") else "ws"
-    demo_upstream = f"{ocpp_scheme}://127.0.0.1:{OCPP_PORT}"
-    demo_simulator = DemoChargerSimulator(demo_upstream, DEMO_PASSWORD)
-    demo_task = asyncio.create_task(demo_simulator.run_forever(), name="demo-simulator")
-    _LOGGER.info("Demo simulator started → %s/%s", demo_upstream, DEMO_CHARGE_POINT_ID)
+    if demo_mode_enabled:
+        await apply_demo_runtime(True)
 
     try:
         await asyncio.Event().wait()
     finally:
-        await demo_simulator.stop()
-        demo_task.cancel()
-        try:
-            await demo_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        await apply_demo_runtime(False)
         await ocpp_server.stop()
         await firmware.stop()
         await runner.cleanup()

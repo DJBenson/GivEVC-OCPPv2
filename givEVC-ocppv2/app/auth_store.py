@@ -2271,16 +2271,8 @@ class AuthStore:
             ).fetchone()
         return dict(row)
 
-    def seed_demo_account(self) -> None:
-        """Drop and re-create the demo user, charger, and session history on every startup."""
-        now = _now()
-        user_id = "demo-user-00000000000000000000000000000001"
-        charger_id = "demo-charger-row-000000000000000000001"
-        password_hash = _hash_password(DEMO_PASSWORD)
-        ocpp_password_hash = _hash_secret(DEMO_PASSWORD)
-
+    def remove_demo_account(self) -> None:
         with self._connect() as conn:
-            # Remove old demo data completely
             conn.execute("DELETE FROM users WHERE is_demo = 1")
             conn.execute(
                 "DELETE FROM charging_sessions WHERE charge_point_id = ?",
@@ -2301,6 +2293,17 @@ class AuthStore:
                     (DEMO_CHARGE_POINT_ID,),
                 )
 
+    def seed_demo_account(self) -> None:
+        """Drop and re-create the demo user, charger, and session history."""
+        now = _now()
+        user_id = "demo-user-00000000000000000000000000000001"
+        charger_id = "demo-charger-row-000000000000000000001"
+        password_hash = _hash_password(DEMO_PASSWORD)
+        ocpp_password_hash = _hash_secret(DEMO_PASSWORD)
+
+        self.remove_demo_account()
+
+        with self._connect() as conn:
             # Insert demo user (pre-verified, no 2FA, not admin)
             conn.execute(
                 """
@@ -2651,14 +2654,21 @@ class AuthStore:
 
     def is_demo_mode_enabled(self) -> bool:
         val = self.get_system_setting(SYSTEM_SETTING_DEMO_MODE)
-        return str(val or "").lower() not in ("0", "false", "disabled", "off", "no")
+        return str(val or "").lower() in ("1", "true", "enabled", "on", "yes")
 
     def set_demo_mode_enabled(self, enabled: bool) -> None:
         self.set_system_setting(SYSTEM_SETTING_DEMO_MODE, "1" if enabled else "0")
+        if enabled:
+            self.seed_demo_account()
+        else:
+            self.remove_demo_account()
 
     def seed_startup_data(self) -> None:
         """Run all startup pre-seeding in one place."""
-        self.seed_demo_account()
+        if self.is_demo_mode_enabled():
+            self.seed_demo_account()
+        else:
+            self.remove_demo_account()
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")

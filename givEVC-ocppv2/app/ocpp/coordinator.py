@@ -3006,7 +3006,10 @@ def _build_charging_schedule_payload(schedule: dict[str, Any]) -> dict[str, Any]
     if all_days_selected:
         recurrency = "Daily"
         cycle_seconds = 86400
-        anchor = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        now_utc = datetime.now(UTC)
+        anchor = (now_utc - timedelta(days=now_utc.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
         now_local = datetime.now(local_tz)
         local_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
