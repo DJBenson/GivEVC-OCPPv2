@@ -1962,6 +1962,7 @@ canvas { width: 100% !important; display: block; }
           <div class="account-panel">
             <h4>Data Maintenance</h4>
             <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Remove charging sessions, meter readings, and state snapshots that belong to deleted or unrecognised chargers.</p>
+            <div id="admin-orphan-counts" style="color:var(--muted);font-size:13px;margin-bottom:12px">Loading…</div>
             <button class="btn btn-outline btn-sm" type="button" onclick="adminPurgeOrphanedData()">Purge Orphaned Data</button>
             <div id="admin-purge-status" style="margin-top:8px;font-size:13px"></div>
           </div>
@@ -3975,7 +3976,7 @@ function activateAdminSub(name) {
   adminPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('admin-sub-' + subName)?.classList.add('active');
   adminPage.querySelector(`.pill-tab[data-admin-sub="${subName}"]`)?.classList.add('active');
-  if (subName === 'statistics') { loadAdminStats(); loadAdminUpdateCheck(); }
+  if (subName === 'statistics') { loadAdminStats(); loadAdminUpdateCheck(); loadOrphanedCounts(); }
 }
 
 async function loadAdminStats() {
@@ -4033,6 +4034,24 @@ async function adminForceRepushSchedules() {
   }
 }
 
+async function loadOrphanedCounts() {
+  const el = document.getElementById('admin-orphan-counts');
+  if (!el) return;
+  try {
+    const d = await apiJson('/api/admin/orphaned-data-counts');
+    const total = d.sessions + d.meter_readings + d.snapshots;
+    if (total === 0) {
+      el.textContent = 'No orphaned records found.';
+      el.style.color = 'var(--ok)';
+    } else {
+      el.innerHTML = `<span style="color:var(--warn)">${total} orphaned record(s):</span> ${d.sessions} session(s), ${d.meter_readings} meter reading(s), ${d.snapshots} snapshot(s)`;
+      el.style.color = '';
+    }
+  } catch (err) {
+    el.textContent = 'Could not load orphan counts.';
+  }
+}
+
 async function adminPurgeOrphanedData() {
   const btn = document.querySelector('[onclick="adminPurgeOrphanedData()"]');
   const status = document.getElementById('admin-purge-status');
@@ -4050,6 +4069,7 @@ async function adminPurgeOrphanedData() {
     const msg = `Purged: ${d.sessions} session(s), ${d.meter_readings} meter reading(s), ${d.snapshots} snapshot(s)`;
     if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; }
     loadAdminStats();
+    loadOrphanedCounts();
   } catch (err) {
     if (status) { status.textContent = err.message || 'Failed'; status.style.color = 'var(--err)'; }
   } finally {
