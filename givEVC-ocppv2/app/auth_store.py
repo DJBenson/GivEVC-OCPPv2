@@ -1443,7 +1443,7 @@ class AuthStore:
                 FROM charging_sessions
                 WHERE charge_point_id = ? AND stopped_at IS NOT NULL
                   AND meter_stop IS NOT NULL AND meter_start IS NOT NULL
-                  AND DATE(started_at) = DATE('now')
+                  AND DATE(stopped_at) = DATE('now')
                 """,
                 (charge_point_id,),
             ).fetchone()
@@ -1453,8 +1453,8 @@ class AuthStore:
                 FROM charging_sessions
                 WHERE charge_point_id = ? AND stopped_at IS NOT NULL
                   AND meter_stop IS NOT NULL AND meter_start IS NOT NULL
-                  AND DATE(started_at) >= DATE('now', 'start of month')
-                  AND DATE(started_at) < DATE('now', 'start of month', '+1 month')
+                  AND DATE(stopped_at) >= DATE('now', 'start of month')
+                  AND DATE(stopped_at) < DATE('now', 'start of month', '+1 month')
                 """,
                 (charge_point_id,),
             ).fetchone()
