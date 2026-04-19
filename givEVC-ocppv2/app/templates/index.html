@@ -1911,6 +1911,12 @@ canvas { width: 100% !important; display: block; }
             <h4>System</h4>
             <div id="admin-stats-system" style="color:var(--muted);font-size:13px">Loading…</div>
           </div>
+          <div class="account-panel">
+            <h4>Schedule Actions</h4>
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Re-push active schedules to all online chargers. Offline chargers will receive the updated schedule on next reconnect.</p>
+            <button class="btn btn-teal btn-sm" type="button" onclick="adminForceRepushSchedules()">Force Re-push All Schedules</button>
+            <div id="admin-repush-status" class="auth-error" style="margin-top:8px"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -3850,18 +3856,38 @@ async function loadAdminStats() {
     document.getElementById('admin-stats-data').innerHTML =
       `<div class="stat-row"><span>Charging sessions (total): </span><strong>${sess.total ?? '—'}</strong></div>` +
       `<div class="stat-row"><span>Charging sessions (active): </span><strong>${sess.active ?? '—'}</strong></div>` +
-      `<div class="stat-row"><span>Meter samples: </span><strong>${(d.meter_samples ?? '—').toLocaleString?.() ?? d.meter_samples}</strong></div>`;
+      `<div class="stat-row"><span>Meter samples: </span><strong>${(d.meter_samples ?? '—').toLocaleString?.() ?? d.meter_samples}</strong></div>` +
+      `<div class="stat-row"><span>Schedules pending DST correction: </span><strong>${d.dst_correction_pending ?? '—'}</strong></div>`;
     const dbMb = d.database_size_bytes ? (d.database_size_bytes / 1048576).toFixed(2) + ' MB' : '—';
+    const dstLastRun = d.dst_last_run ? new Date(d.dst_last_run).toLocaleString() : 'Never';
     document.getElementById('admin-stats-system').innerHTML =
       `<div class="stat-row"><span>Active API keys: </span><strong>${d.api_keys_active ?? '—'}</strong></div>` +
       `<div class="stat-row"><span>Active browser sessions: </span><strong>${d.browser_sessions_active ?? '—'}</strong></div>` +
-      `<div class="stat-row"><span>Database size: </span><strong>${dbMb}</strong></div>`;
+      `<div class="stat-row"><span>Database size: </span><strong>${dbMb}</strong></div>` +
+      `<div class="stat-row"><span>Last DST correction run: </span><strong>${dstLastRun}</strong></div>`;
   } catch (err) {
     const message = escapeHtml(err.message || 'Could not load statistics');
     ['admin-stats-users', 'admin-stats-chargers', 'admin-stats-data', 'admin-stats-system'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = `<span style="color:var(--err)">${message}</span>`;
     });
+  }
+}
+
+async function adminForceRepushSchedules() {
+  const btn = document.querySelector('[onclick="adminForceRepushSchedules()"]');
+  const status = document.getElementById('admin-repush-status');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = '';
+  try {
+    const d = await apiJson('/api/admin/schedules/force-repush', { method: 'POST' });
+    const msg = `Done: ${d.succeeded} pushed, ${d.failed} failed, ${d.offline_flagged} offline (will correct on reconnect)`;
+    if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; }
+    loadAdminStats();
+  } catch (err) {
+    if (status) { status.textContent = err.message || 'Failed'; status.style.color = 'var(--err)'; }
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 

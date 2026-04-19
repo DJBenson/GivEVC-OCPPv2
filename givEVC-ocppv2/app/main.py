@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -968,7 +969,22 @@ def build_web_app(
 
     async def api_admin_stats(request: web.Request) -> web.Response:
         _require_admin(request)
-        return _json_response(auth_store.get_admin_stats())
+        stats = auth_store.get_admin_stats()
+        # Augment with DST info from coordinator snapshots
+        lister = getattr(auth_store, "list_all_adopted_charge_point_ids", None)
+        all_ids: list[str] = lister() if lister else []
+        pending_count = sum(
+            1 for cpid in all_ids
+            if coordinator._get_dst_correction_pending(cpid)
+        )
+        stats["dst_correction_pending"] = pending_count
+        stats["dst_last_run"] = auth_store.get_system_setting("dst_last_run")
+        return _json_response(stats)
+
+    async def api_admin_force_repush_schedules(request: web.Request) -> web.Response:
+        _require_admin(request)
+        result = await coordinator.async_force_repush_all_schedules(auth_store=auth_store)
+        return _json_response(result)
 
     # ── SSE: push state updates to the browser ─────────────────────────────
     async def api_events(request: web.Request) -> web.StreamResponse:
@@ -1454,6 +1470,7 @@ def build_web_app(
     app.router.add_get("/api/admin/demo", api_admin_demo_settings)
     app.router.add_post("/api/admin/demo", api_admin_set_demo_mode)
     app.router.add_get("/api/admin/stats", api_admin_stats)
+    app.router.add_post("/api/admin/schedules/force-repush", api_admin_force_repush_schedules)
     app.router.add_get("/api/state", api_state)
     app.router.add_get("/api/energy", api_energy)
     app.router.add_get("/api/power", api_power)
@@ -2443,6 +2460,41 @@ def _tag_log_detail(id_tag: object) -> str:
     return f"Tag ID: {value}"
 
 
+# ── DST correction scheduler ───────────────────────────────────────────────────
+
+def _next_uk_dst_transition(after: datetime) -> datetime:
+    """Return the next UK DST transition after `after` (UTC): last Sun of March or October at 01:01 UTC."""
+    from datetime import date as _date
+    def last_sunday(year: int, month: int) -> _date:
+        # Find last Sunday of the month
+        d = _date(year, month, 31 if month in (1,3,5,7,8,10,12) else 30 if month in (4,6,9,11) else 28)
+        return d - timedelta(days=d.weekday() + 1) if d.weekday() != 6 else d
+
+    candidates = []
+    for year in (after.year, after.year + 1):
+        for month in (3, 10):
+            d = last_sunday(year, month)
+            t = datetime(d.year, d.month, d.day, 1, 1, 0, tzinfo=UTC)
+            if t > after:
+                candidates.append(t)
+    return min(candidates)
+
+
+async def _dst_correction_task(coordinator: object, auth_store: object) -> None:
+    import logging
+    logger = logging.getLogger(__name__)
+    while True:
+        next_transition = _next_uk_dst_transition(datetime.now(UTC))
+        wait_seconds = (next_transition - datetime.now(UTC)).total_seconds()
+        logger.info("DST correction: next run at %s (in %.0f hours)", next_transition.isoformat(), wait_seconds / 3600)
+        await asyncio.sleep(wait_seconds)
+        logger.info("DST correction: running now")
+        try:
+            await coordinator.async_dst_correction(auth_store=auth_store)
+        except Exception as exc:
+            logger.error("DST correction task failed: %s", exc)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
@@ -2522,9 +2574,16 @@ async def main() -> None:
     if demo_mode_enabled:
         await apply_demo_runtime(True)
 
+    dst_task = asyncio.create_task(_dst_correction_task(coordinator, auth_store), name="dst-correction")
+
     try:
         await asyncio.Event().wait()
     finally:
+        dst_task.cancel()
+        try:
+            await dst_task
+        except asyncio.CancelledError:
+            pass
         await apply_demo_runtime(False)
         await ocpp_server.stop()
         await firmware.stop()

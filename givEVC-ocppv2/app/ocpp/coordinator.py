@@ -31,6 +31,7 @@ MAX_STORED_ACTION_LOGS = 500
 DEFAULT_REMOTE_ID_TAG = "HA-REMOTE"
 DEFAULT_EVSE_MAX_CURRENT = 32.0
 FIRMWARE_INSTALLING_TIMEOUT = timedelta(minutes=10)
+DST_SCHEDULE_PUSH_CONCURRENCY = 10
 _tx_counter = itertools.count(1)
 CHARGE_START_STATUSES = {"Available", "Preparing"}
 CHARGE_STOP_STATUSES = {"Charging", "SuspendedEVSE", "SuspendedEV"}
@@ -615,6 +616,17 @@ class OcppCoordinator:
                 self._safe_refresh_configuration(refresh_charge_point_id)
             ),
         )
+        if refresh_charge_point_id and self._get_dst_correction_pending(refresh_charge_point_id):
+            asyncio.get_running_loop().call_later(
+                5.0,
+                lambda: asyncio.ensure_future(
+                    self._async_repush_schedule(
+                        refresh_charge_point_id,
+                        "Schedule timezone correction (DST)",
+                        via="System (DST correction)",
+                    )
+                ),
+            )
 
     async def async_record_unmanaged_boot(
         self, session_id: str, charge_point_id: str | None, payload: dict[str, Any]
@@ -1572,8 +1584,10 @@ class OcppCoordinator:
 
         if normalised["enabled"]:
             ocpp_response = await self._async_apply_charging_schedule(normalised, charge_point_id=charge_point_id)
+            self._set_dst_correction_pending(str(charge_point_id or self.data.charge_point_id or ""), False)
         elif previous_enabled:
             ocpp_response = await self._async_clear_charging_schedule(charge_point_id=charge_point_id)
+            self._set_dst_correction_pending(str(charge_point_id or self.data.charge_point_id or ""), False)
 
         updated: list[dict[str, Any]] = []
         replaced = False
@@ -1613,8 +1627,10 @@ class OcppCoordinator:
         ocpp_response: dict[str, Any] | None = None
         if enabled:
             ocpp_response = await self._async_apply_charging_schedule(target, charge_point_id=charge_point_id)
+            self._set_dst_correction_pending(str(charge_point_id or self.data.charge_point_id or ""), False)
         elif already_enabled:
             ocpp_response = await self._async_clear_charging_schedule(charge_point_id=charge_point_id)
+            self._set_dst_correction_pending(str(charge_point_id or self.data.charge_point_id or ""), False)
 
         for item in state.charging_schedule:
             if str(item.get("id")) == str(schedule_id):
@@ -1649,6 +1665,135 @@ class OcppCoordinator:
             raise ValueError(f"Unknown schedule: {schedule_id}")
         self._persist_charge_point_state(charge_point_id, state, persist=True)
         return ocpp_response
+
+    def _active_schedule_for_charge_point(self, charge_point_id: str) -> dict[str, Any] | None:
+        state = self.state_for_charge_point(charge_point_id)
+        return next(
+            (item for item in state.charging_schedule if item.get("enabled")),
+            None,
+        )
+
+    def _is_charge_point_online(self, charge_point_id: str) -> bool:
+        return any(
+            item.get("charge_point_id") == charge_point_id
+            for item in self._connected_charge_points.values()
+        ) or (self.data.connected and self.data.charge_point_id == charge_point_id)
+
+    def _set_dst_correction_pending(self, charge_point_id: str, pending: bool) -> None:
+        snapshot = self.charger_snapshot_for(charge_point_id) or {}
+        snapshot["dst_correction_pending"] = pending
+        saver = getattr(self._state_store, "save_charger_state", None)
+        if saver:
+            saver(charge_point_id, snapshot)
+
+    def _get_dst_correction_pending(self, charge_point_id: str) -> bool:
+        snapshot = self.charger_snapshot_for(charge_point_id) or {}
+        return bool(snapshot.get("dst_correction_pending"))
+
+    async def _async_repush_schedule(
+        self,
+        charge_point_id: str,
+        action_label: str,
+        via: str = "System",
+    ) -> bool:
+        """Re-push the active schedule for one charger. Returns True on success."""
+        schedule = self._active_schedule_for_charge_point(charge_point_id)
+        if not schedule:
+            self._set_dst_correction_pending(charge_point_id, False)
+            return False
+        try:
+            result = await self._async_apply_charging_schedule(schedule, charge_point_id=charge_point_id)
+            self._set_dst_correction_pending(charge_point_id, False)
+            self.record_portal_action(
+                action_label,
+                f"Schedule '{schedule.get('name', schedule.get('id'))}' re-pushed successfully",
+                response=result,
+                success=True,
+                charge_point_id=charge_point_id,
+                user="System",
+                via=via,
+            )
+            _LOGGER.info("%s: %s for %s", via, action_label, charge_point_id)
+            return True
+        except Exception as exc:
+            self.record_portal_action(
+                action_label,
+                f"Failed to re-push schedule '{schedule.get('name', schedule.get('id'))}': {exc}",
+                response=str(exc),
+                success=False,
+                charge_point_id=charge_point_id,
+                user="System",
+                via=via,
+            )
+            _LOGGER.warning("%s: %s failed for %s: %s", via, action_label, charge_point_id, exc)
+            return False
+
+    async def async_dst_correction(self, auth_store: Any | None = None) -> dict[str, Any]:
+        """Apply DST schedule correction to all chargers with an active schedule."""
+        lister = getattr(auth_store or self._state_store, "list_all_adopted_charge_point_ids", None)
+        all_ids: list[str] = lister() if lister else (
+            [self.data.charge_point_id] if self.data.charge_point_id else []
+        )
+
+        online_ids = [cpid for cpid in all_ids if self._active_schedule_for_charge_point(cpid) and self._is_charge_point_online(cpid)]
+        offline_ids = [cpid for cpid in all_ids if self._active_schedule_for_charge_point(cpid) and not self._is_charge_point_online(cpid)]
+
+        for cpid in offline_ids:
+            self._set_dst_correction_pending(cpid, True)
+            _LOGGER.info("DST correction: charger %s offline, flagged for reconnect", cpid)
+
+        sem = asyncio.Semaphore(DST_SCHEDULE_PUSH_CONCURRENCY)
+
+        async def _push_one(cpid: str) -> bool:
+            async with sem:
+                return await self._async_repush_schedule(
+                    cpid,
+                    "Schedule timezone correction (DST)",
+                    via="System (DST correction)",
+                )
+
+        results = await asyncio.gather(*[_push_one(cpid) for cpid in online_ids], return_exceptions=True)
+        succeeded = sum(1 for r in results if r is True)
+        failed = sum(1 for r in results if r is not True)
+
+        setter = getattr(auth_store or self._state_store, "set_system_setting", None)
+        if setter:
+            setter("dst_last_run", datetime.now(UTC).isoformat())
+
+        _LOGGER.info(
+            "DST correction complete: %d online pushed (%d ok, %d failed), %d offline flagged",
+            len(online_ids), succeeded, failed, len(offline_ids),
+        )
+        return {"online_pushed": len(online_ids), "succeeded": succeeded, "failed": failed, "offline_flagged": len(offline_ids)}
+
+    async def async_force_repush_all_schedules(self, auth_store: Any | None = None) -> dict[str, Any]:
+        """Force re-push active schedules to all chargers (online now, flag offline)."""
+        lister = getattr(auth_store or self._state_store, "list_all_adopted_charge_point_ids", None)
+        all_ids: list[str] = lister() if lister else (
+            [self.data.charge_point_id] if self.data.charge_point_id else []
+        )
+
+        online_ids = [cpid for cpid in all_ids if self._active_schedule_for_charge_point(cpid) and self._is_charge_point_online(cpid)]
+        offline_ids = [cpid for cpid in all_ids if self._active_schedule_for_charge_point(cpid) and not self._is_charge_point_online(cpid)]
+
+        for cpid in offline_ids:
+            self._set_dst_correction_pending(cpid, True)
+
+        sem = asyncio.Semaphore(DST_SCHEDULE_PUSH_CONCURRENCY)
+
+        async def _push_one(cpid: str) -> bool:
+            async with sem:
+                return await self._async_repush_schedule(
+                    cpid,
+                    "Schedule force re-push",
+                    via="Admin",
+                )
+
+        results = await asyncio.gather(*[_push_one(cpid) for cpid in online_ids], return_exceptions=True)
+        succeeded = sum(1 for r in results if r is True)
+        failed = sum(1 for r in results if r is not True)
+
+        return {"online_pushed": len(online_ids), "succeeded": succeeded, "failed": failed, "offline_flagged": len(offline_ids)}
 
     async def _async_apply_charging_schedule(
         self, schedule: dict[str, Any], charge_point_id: str | None = None

@@ -571,6 +571,16 @@ class AuthStore:
                 ),
             )
 
+    def list_all_adopted_charge_point_ids(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT charge_point_id FROM chargers
+                WHERE charge_point_id IS NOT NULL AND deleted_at IS NULL
+                """
+            ).fetchall()
+        return [row["charge_point_id"] for row in rows]
+
     def list_charger_states(self, charge_point_ids: list[str]) -> dict[str, dict[str, Any]]:
         normalised_ids = [str(value).strip() for value in charge_point_ids if str(value or "").strip()]
         if not normalised_ids:
