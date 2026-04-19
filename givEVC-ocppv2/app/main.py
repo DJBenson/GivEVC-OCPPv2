@@ -112,19 +112,26 @@ AUTH_DB_PATH  = DATA_DIR / "auth.db"
 TEMPLATES     = Path(__file__).parent / "templates"
 
 def _read_app_version() -> str:
-    config_path = Path(__file__).parent.parent / "config.yaml"
-    try:
-        import yaml  # type: ignore
-        data = yaml.safe_load(config_path.read_text())
-        return str(data.get("version", "unknown"))
-    except Exception:
-        pass
-    try:
-        for line in config_path.read_text().splitlines():
-            if line.startswith("version:"):
-                return line.split(":", 1)[1].strip().strip('"\'')
-    except Exception:
-        pass
+    # In Docker: config.yaml is copied to /app/ alongside main.py
+    # In development: config.yaml is one level up in givEVC-ocppv2/
+    for config_path in (
+        Path(__file__).parent / "config.yaml",
+        Path(__file__).parent.parent / "config.yaml",
+    ):
+        if not config_path.exists():
+            continue
+        try:
+            import yaml  # type: ignore
+            data = yaml.safe_load(config_path.read_text())
+            return str(data.get("version", "unknown"))
+        except Exception:
+            pass
+        try:
+            for line in config_path.read_text().splitlines():
+                if line.startswith("version:"):
+                    return line.split(":", 1)[1].strip().strip('"\'')
+        except Exception:
+            pass
     return "unknown"
 
 APP_VERSION = _read_app_version()
@@ -1029,6 +1036,8 @@ def build_web_app(
             auth_store.set_update_channel(channel)
         except ValueError as exc:
             return _json_response({"error": str(exc)}, status=422)
+        if not _RUNNING_UNDER_HA:
+            asyncio.ensure_future(_run_update_check(auth_store))
         return _json_response({"ok": True, "channel": channel})
 
     # ── SSE: push state updates to the browser ─────────────────────────────
@@ -2608,44 +2617,46 @@ def _parse_version(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
-async def _update_check_task(auth_store: AuthStore) -> None:
+async def _run_update_check(auth_store: AuthStore) -> None:
     global _update_info
+    try:
+        channel = auth_store.get_update_channel()
+        import aiohttp as _aiohttp
+        async with _aiohttp.ClientSession() as session:
+            async with session.get(
+                _GITHUB_RELEASES_URL,
+                headers={"Accept": "application/vnd.github+json"},
+                timeout=_aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                releases = await resp.json()
+        candidates = [
+            r for r in releases
+            if not r.get("draft")
+            and (channel == "beta" or not r.get("prerelease"))
+        ]
+        if candidates:
+            latest = candidates[0]
+            tag = str(latest.get("tag_name", "")).lstrip("v")
+            current = APP_VERSION.lstrip("v")
+            is_newer = _parse_version(tag) > _parse_version(current)
+            _update_info = {
+                "latest_version": tag,
+                "is_prerelease": latest.get("prerelease", False),
+                "update_available": is_newer,
+                "release_url": latest.get("html_url", ""),
+                "channel": channel,
+                "checked_at": datetime.now(UTC).isoformat(),
+            }
+        else:
+            _update_info = {"update_available": False, "checked_at": datetime.now(UTC).isoformat()}
+    except Exception as exc:
+        _LOGGER.debug("Update check failed: %s", exc)
+        _update_info = {"update_available": False, "error": str(exc), "checked_at": datetime.now(UTC).isoformat()}
+
+
+async def _update_check_task(auth_store: AuthStore) -> None:
     while True:
-        try:
-            channel = auth_store.get_update_channel()
-            import aiohttp as _aiohttp
-            async with _aiohttp.ClientSession() as session:
-                async with session.get(
-                    _GITHUB_RELEASES_URL,
-                    headers={"Accept": "application/vnd.github+json"},
-                    timeout=_aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    releases = await resp.json()
-
-            candidates = [
-                r for r in releases
-                if not r.get("draft")
-                and (channel == "beta" or not r.get("prerelease"))
-            ]
-            if candidates:
-                latest = candidates[0]
-                tag = str(latest.get("tag_name", "")).lstrip("v")
-                current = APP_VERSION.lstrip("v")
-                is_newer = _parse_version(tag) > _parse_version(current)
-                _update_info = {
-                    "latest_version": tag,
-                    "is_prerelease": latest.get("prerelease", False),
-                    "update_available": is_newer,
-                    "release_url": latest.get("html_url", ""),
-                    "channel": channel,
-                    "checked_at": datetime.now(UTC).isoformat(),
-                }
-            else:
-                _update_info = {"update_available": False, "checked_at": datetime.now(UTC).isoformat()}
-        except Exception as exc:
-            _LOGGER.debug("Update check failed: %s", exc)
-            _update_info = {"update_available": False, "error": str(exc), "checked_at": datetime.now(UTC).isoformat()}
-
+        await _run_update_check(auth_store)
         await asyncio.sleep(_UPDATE_CHECK_INTERVAL)
 
 

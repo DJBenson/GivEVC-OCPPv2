@@ -1927,7 +1927,7 @@ canvas { width: 100% !important; display: block; }
             <div id="admin-stats-updates" style="color:var(--muted);font-size:13px">Loading…</div>
             <div style="margin-top:12px">
               <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:6px">Update channel</label>
-              <select id="admin-update-channel" onchange="setUpdateChannel(this.value)" style="font-size:13px">
+              <select id="admin-update-channel" onchange="setUpdateChannel(this.value)" class="firmware-select">
                 <option value="stable">Stable releases only</option>
                 <option value="beta">Include pre-releases (beta)</option>
               </select>
@@ -3912,6 +3912,8 @@ async function adminForceRepushSchedules() {
   }
 }
 
+let _update_info_checked_at = null;
+
 async function loadAdminUpdateCheck() {
   const panel = document.getElementById('admin-updates-panel');
   const el = document.getElementById('admin-stats-updates');
@@ -3919,6 +3921,7 @@ async function loadAdminUpdateCheck() {
   const channelSelect = document.getElementById('admin-update-channel');
   try {
     const d = await apiJson('/api/admin/update-check');
+    _update_info_checked_at = d.checked_at || null;
     if (!d.update_notifications_enabled) {
       if (panel) panel.style.display = 'none';
       if (banner) banner.style.display = 'none';
@@ -3950,10 +3953,19 @@ async function loadAdminUpdateCheck() {
 }
 
 async function setUpdateChannel(channel) {
+  const el = document.getElementById('admin-stats-updates');
   try {
+    const before = _update_info_checked_at;
     await apiJson('/api/admin/update-channel', { method: 'POST', body: JSON.stringify({ channel }) });
+    if (el) el.innerHTML = '<span style="color:var(--muted)">Checking…</span>';
+    // Poll until the backend has completed a fresh check
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const d = await apiJson('/api/admin/update-check').catch(() => null);
+      if (d && d.checked_at !== before) { _update_info_checked_at = d.checked_at; break; }
+    }
     loadAdminUpdateCheck();
-  } catch (_) {}
+  } catch (_) { loadAdminUpdateCheck(); }
 }
 
 function showAccountSub(name, options = {}) {
