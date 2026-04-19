@@ -1,6 +1,6 @@
 name: "GivEVC OCPPv2"
 description: "GivEVC OCPP v2 integration for Home Assistant"
-version: "0.1.0"
+version: "1.0.0"
 slug: "givevc-ocppv2"
 url: "https://github.com/DJBenson/GivEVC-OCPPv2"
 arch:

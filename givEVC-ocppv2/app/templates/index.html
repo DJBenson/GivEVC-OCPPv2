@@ -292,6 +292,10 @@ body:not(.is-admin) .admin-only { display:none !important; }
 }
 .nav-action:hover { background: rgba(255,255,255,.08); color: #fff; }
 .nav-version { font-size: 10px; color: rgba(255,255,255,.28); text-align: center; margin-top: 2px; }
+.nav-update-banner { font-size: 11px; text-align: center; margin-top: 6px; padding: 5px 8px;
+  background: rgba(255,180,0,.15); border: 1px solid rgba(255,180,0,.3); border-radius: 6px;
+  color: #ffd966; cursor: pointer; display: none; }
+.nav-update-banner:hover { background: rgba(255,180,0,.25); }
 
 /* ─── Main area ──────────────────────────────────── */
 .main { margin-left: var(--nav-w); flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -953,7 +957,8 @@ canvas { width: 100% !important; display: block; }
     <div class="nav-actions">
       <button class="nav-action" type="button" onclick="logout()">Log out</button>
     </div>
-    <div class="nav-version">GivEVC OCPPv2 · v0.1.0</div>
+    <div class="nav-version"><a id="app-version-link" href="https://github.com/DJBenson/GivEVC-OCPPv2" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">GivEVC OCPPv2</a></div>
+    <div class="nav-update-banner" id="nav-update-banner" onclick="showPage('admin',{sub:'statistics'})"></div>
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" onclick="closeNav()"></div>
@@ -1917,6 +1922,17 @@ canvas { width: 100% !important; display: block; }
             <button class="btn btn-teal btn-sm" type="button" onclick="adminForceRepushSchedules()">Force Re-push All Schedules</button>
             <div id="admin-repush-status" class="auth-error" style="margin-top:8px"></div>
           </div>
+          <div class="account-panel" id="admin-updates-panel" style="display:none">
+            <h4>Updates</h4>
+            <div id="admin-stats-updates" style="color:var(--muted);font-size:13px">Loading…</div>
+            <div style="margin-top:12px">
+              <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:6px">Update channel</label>
+              <select id="admin-update-channel" onchange="setUpdateChannel(this.value)" style="font-size:13px">
+                <option value="stable">Stable releases only</option>
+                <option value="beta">Include pre-releases (beta)</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2607,6 +2623,11 @@ function applyAuthState(data, { fromLogin = false } = {}) {
   document.body.className = hasCharger ? 'auth-app has-charger' : 'auth-app no-charger';
   document.body.classList.toggle('is-admin', _authState.user?.role === 'Admin');
   document.body.classList.toggle('is-demo', !!_authState.user?.is_demo);
+  apiJson('/api/version').then(v => {
+    const el = document.getElementById('app-version-link');
+    if (el && v?.version) el.textContent = `GivEVC OCPPv2 · v${v.version}`;
+  }).catch(() => {});
+  if (_authState.user?.role === 'Admin') loadAdminUpdateCheck();
   set('nav-user-name', _authState.user?.display_name || _authState.user?.email || 'Account');
   set('nav-user-role', _authState.user?.role || 'User');
   syncLogOcppToggle();
@@ -3833,7 +3854,7 @@ function activateAdminSub(name) {
   adminPage.querySelectorAll('.pill-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('admin-sub-' + subName)?.classList.add('active');
   adminPage.querySelector(`.pill-tab[data-admin-sub="${subName}"]`)?.classList.add('active');
-  if (subName === 'statistics') loadAdminStats();
+  if (subName === 'statistics') { loadAdminStats(); loadAdminUpdateCheck(); }
 }
 
 async function loadAdminStats() {
@@ -3889,6 +3910,50 @@ async function adminForceRepushSchedules() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+async function loadAdminUpdateCheck() {
+  const panel = document.getElementById('admin-updates-panel');
+  const el = document.getElementById('admin-stats-updates');
+  const banner = document.getElementById('nav-update-banner');
+  const channelSelect = document.getElementById('admin-update-channel');
+  try {
+    const d = await apiJson('/api/admin/update-check');
+    if (!d.update_notifications_enabled) {
+      if (panel) panel.style.display = 'none';
+      if (banner) banner.style.display = 'none';
+      return;
+    }
+    if (panel) panel.style.display = '';
+    if (channelSelect && d.channel) channelSelect.value = d.channel;
+    const checkedAt = d.checked_at ? new Date(d.checked_at).toLocaleString() : '—';
+    if (d.update_available) {
+      const preTag = d.is_prerelease ? ' <span style="font-size:11px;opacity:.7">(pre-release)</span>' : '';
+      if (el) el.innerHTML =
+        `<div class="stat-row"><span>Current version: </span><strong>v${escapeHtml(d.current_version)}</strong></div>` +
+        `<div class="stat-row"><span>Latest version: </span><strong><a href="${escapeHtml(d.release_url)}" target="_blank" rel="noopener noreferrer">v${escapeHtml(d.latest_version)}</a>${preTag}</strong></div>` +
+        `<div class="stat-row"><span>Last checked: </span><strong>${checkedAt}</strong></div>`;
+      if (banner) {
+        banner.textContent = `Update available: v${d.latest_version}`;
+        banner.style.display = '';
+      }
+    } else {
+      if (el) el.innerHTML =
+        `<div class="stat-row"><span>Current version: </span><strong>v${escapeHtml(d.current_version)}</strong></div>` +
+        `<div class="stat-row"><span>Status: </span><strong style="color:var(--ok)">Up to date</strong></div>` +
+        `<div class="stat-row"><span>Last checked: </span><strong>${checkedAt}</strong></div>`;
+      if (banner) banner.style.display = 'none';
+    }
+  } catch (_) {
+    if (panel) panel.style.display = 'none';
+  }
+}
+
+async function setUpdateChannel(channel) {
+  try {
+    await apiJson('/api/admin/update-channel', { method: 'POST', body: JSON.stringify({ channel }) });
+    loadAdminUpdateCheck();
+  } catch (_) {}
 }
 
 function showAccountSub(name, options = {}) {

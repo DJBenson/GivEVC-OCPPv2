@@ -155,8 +155,9 @@ In the charger's OCPP settings (via the GivEnergy app or local web interface):
 |---------|-------|
 | OCPP version | OCPP 1.6 JSON |
 | Central system URL | The endpoint URL from Step 1 (e.g. `wss://charger.example.com/`) |
-| Charge Point Identity | The Charge Point ID from Step 1 |
 | Password | The OCPP Password from Step 1 |
+
+> **Note:** GivEnergy chargers do not have a user-configurable Charge Point Identity — the charger's serial number is used automatically. The portal accepts the connection and links it to your account based on the OCPP password.
 
 ### Step 3 — Charger Connects
 
@@ -388,29 +389,31 @@ POST /api/v1/ev-charger/{uuid}/commands/{command_id}   (write scope)
 
 ### Commands Reference
 
+Commands marked with ✦ are **not available in the GivEnergy Cloud API** and are unique to this portal.
+
 | Command | Body Fields | Description |
 |---------|------------|-------------|
 | `start-charge` | _(none)_ | Start a session |
 | `stop-charge` | _(none)_ | Stop the active session |
 | `change-mode` | `mode`: `Eco` \| `SuperEco` \| `Boost` \| `ModbusSlave` | Set charge mode |
 | `adjust-charge-power-limit` | `limit`: 6–32 | Set max current (amps) |
-| `set-session-energy-limit` | `limit`: 0.1–250 | Cap session energy (kWh); omit to remove cap |
-| `set-plug-and-go` | `enabled`: boolean | Auto-start on plug-in |
+| `set-session-energy-limit` ✦ | `limit`: 0.1–250 | Cap session energy (kWh); omit to remove cap |
+| `set-plug-and-go` ✦ | `enabled`: boolean | Auto-start on plug-in |
 | `unlock-connector` | _(none)_ | Release a stuck connector |
 | `restart-charger` | `hard_reset`: boolean | Restart (soft or hard) |
 | `perform-factory-reset` | _(none)_ | Factory reset |
 | `read-cp-voltage-and-duty-cycle` | _(none)_ | Read CP signal |
-| `change-randomised-delay-duration` | `duration`: 600–1800 | Random start delay (seconds) |
-| `adjust-suspended-state-wait-timeout` | `value`: 0–43200 | Suspend timeout (seconds) |
-| `enable-front-panel-led` | `value`: boolean | Toggle LEDs |
-| `enable-local-control` | `value`: boolean | Toggle Modbus control |
-| `set-max-import-capacity` | `value`: 40–100 | DNO fuse rating (amps) |
-| `set-schedule` | `name`, `schedule_id`?, `periods`: [{start_time, end_time, day_of_week[], current_a}] | Create/update schedule |
-| `set-active-schedule` | `schedule_id`? | Activate schedule (omit to disable all) |
-| `delete-charging-profile` | `schedule_id`? | Delete schedule (omit to delete all) |
-| `add-id-tags` | `id_tags`: [{id, alias?, expiry_date?}] | Add RFID tags |
-| `delete-id-tags` | `id_tags`: [id, ...] | Remove RFID tags |
-| `rename-id-tag` | `tag_id`, `alias` | Update tag alias |
+| `change-randomised-delay-duration` ✦ | `duration`: 600–1800 | Random start delay (seconds) |
+| `adjust-suspended-state-wait-timeout` ✦ | `value`: 0–43200 | Suspend timeout (seconds) |
+| `enable-front-panel-led` ✦ | `value`: boolean | Toggle LEDs |
+| `enable-local-control` ✦ | `value`: boolean | Toggle Modbus control |
+| `set-max-import-capacity` ✦ | `value`: 40–100 | DNO fuse rating (amps) |
+| `set-schedule` ✦ | `name`, `schedule_id`?, `periods`: [{start_time, end_time, day_of_week[], current_a}] | Create/update schedule |
+| `set-active-schedule` ✦ | `schedule_id`? | Activate schedule (omit to disable all) |
+| `delete-charging-profile` ✦ | `schedule_id`? | Delete schedule (omit to delete all) |
+| `add-id-tags` ✦ | `id_tags`: [{id, alias?, expiry_date?}] | Add RFID tags |
+| `delete-id-tags` ✦ | `id_tags`: [id, ...] | Remove RFID tags |
+| `rename-id-tag` ✦ | `tag_id`, `alias` | Update tag alias |
 
 ### Response Codes
 

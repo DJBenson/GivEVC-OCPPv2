@@ -21,6 +21,7 @@ from aiohttp import http_exceptions, web
 from auth_store import (
     AuthStore, AuthUser, ROLE_ADMIN,
     DEMO_EMAIL, DEMO_PASSWORD, DEMO_CHARGE_POINT_ID, SYSTEM_SETTING_DEMO_MODE,
+    SYSTEM_SETTING_UPDATE_CHANNEL,
 )
 from demo_simulator import DemoChargerSimulator
 from emailer import EmailSender
@@ -109,6 +110,24 @@ FIRMWARE_ROOT = Path(_env_str("FIRMWARE_ROOT", str(DATA_DIR / "firmware")))
 LEGACY_STATE_PATH = DATA_DIR / "state.json"
 AUTH_DB_PATH  = DATA_DIR / "auth.db"
 TEMPLATES     = Path(__file__).parent / "templates"
+
+def _read_app_version() -> str:
+    config_path = Path(__file__).parent.parent / "config.yaml"
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(config_path.read_text())
+        return str(data.get("version", "unknown"))
+    except Exception:
+        pass
+    try:
+        for line in config_path.read_text().splitlines():
+            if line.startswith("version:"):
+                return line.split(":", 1)[1].strip().strip('"\'')
+    except Exception:
+        pass
+    return "unknown"
+
+APP_VERSION = _read_app_version()
 FIRMWARE_MANIFEST_URL = _env_str("FIRMWARE_MANIFEST_URL", DEFAULT_FIRMWARE_MANIFEST_URL)
 PUBLIC_OCPP_BASE_URL = os.environ.get("PUBLIC_OCPP_BASE_URL") or None
 PUBLIC_FIRMWARE_HOST = os.environ.get("PUBLIC_FIRMWARE_HOST") or None
@@ -397,6 +416,10 @@ def build_web_app(
             return _json_response({"error": "Selected charger is not available"}, status=404)
         data["charge_point_id"] = charge_point_id
         return _json_response({"power": data})
+
+    # ── Version ───────────────────────────────────────────────────────────
+    async def api_version(request: web.Request) -> web.Response:
+        return web.json_response({"version": APP_VERSION})
 
     # ── REST: browser authentication ──────────────────────────────────────
     async def api_auth_session(request: web.Request) -> web.Response:
@@ -986,6 +1009,28 @@ def build_web_app(
         result = await coordinator.async_force_repush_all_schedules(auth_store=auth_store)
         return _json_response(result)
 
+    async def api_admin_update_check(request: web.Request) -> web.Response:
+        _require_admin(request)
+        return _json_response({
+            **_update_info,
+            "current_version": APP_VERSION,
+            "update_notifications_enabled": not _RUNNING_UNDER_HA,
+            "channel": auth_store.get_update_channel(),
+        })
+
+    async def api_admin_set_update_channel(request: web.Request) -> web.Response:
+        _require_admin(request)
+        try:
+            body = await request.json()
+            channel = str(body.get("channel", "stable"))
+        except Exception:
+            return _json_response({"error": "Invalid request body"}, status=400)
+        try:
+            auth_store.set_update_channel(channel)
+        except ValueError as exc:
+            return _json_response({"error": str(exc)}, status=422)
+        return _json_response({"ok": True, "channel": channel})
+
     # ── SSE: push state updates to the browser ─────────────────────────────
     async def api_events(request: web.Request) -> web.StreamResponse:
         user = _require_user(request)
@@ -1432,6 +1477,7 @@ def build_web_app(
                             text=json.dumps({"ok": True, "deleted": deleted}))
 
     # API routes first, catch-all last
+    app.router.add_get("/api/version", api_version)
     app.router.add_get("/api/auth/session", api_auth_session)
     app.router.add_post("/api/auth/register", api_auth_register)
     app.router.add_post("/api/auth/login", api_auth_login)
@@ -1471,6 +1517,8 @@ def build_web_app(
     app.router.add_post("/api/admin/demo", api_admin_set_demo_mode)
     app.router.add_get("/api/admin/stats", api_admin_stats)
     app.router.add_post("/api/admin/schedules/force-repush", api_admin_force_repush_schedules)
+    app.router.add_get("/api/admin/update-check", api_admin_update_check)
+    app.router.add_post("/api/admin/update-channel", api_admin_set_update_channel)
     app.router.add_get("/api/state", api_state)
     app.router.add_get("/api/energy", api_energy)
     app.router.add_get("/api/power", api_power)
@@ -1831,6 +1879,24 @@ def build_web_app(
         command = next((c for c in _COMMAND_CATALOGUE if c["id"] == command_id), None)
         if command is None:
             return _json_response({"message": "Command not found."}, status=404)
+        snapshot = coordinator.charger_snapshot_for(charge_point_id) or {}
+        # Return current state in GivEnergy Cloud API-compatible shape
+        if command_id == "change-mode":
+            current = snapshot.get("charge_mode") or ""
+            modes = ["SuperEco", "Eco", "Boost", "ModbusSlave"]
+            return _json_response({"data": [{"mode": m, "active": m == current} for m in modes]})
+        if command_id == "set-plug-and-go":
+            return _json_response({"data": {"value": bool(snapshot.get("plug_and_go_enabled"))}})
+        if command_id == "enable-front-panel-led":
+            return _json_response({"data": {"value": bool(snapshot.get("front_panel_leds_enabled"))}})
+        if command_id == "enable-local-control":
+            return _json_response({"data": {"value": bool(snapshot.get("local_modbus_enabled"))}})
+        if command_id == "set-session-energy-limit":
+            return _json_response({"data": {"value": snapshot.get("max_energy_per_session_kwh")}})
+        if command_id == "set-max-import-capacity":
+            return _json_response({"data": {"value": snapshot.get("max_import_capacity_a")}})
+        if command_id == "adjust-charge-power-limit":
+            return _json_response({"data": {"value": snapshot.get("current_limit_a")}})
         return _json_response({"data": command})
 
     async def user_api_run_command(request: web.Request) -> web.Response:
@@ -1932,14 +1998,16 @@ def build_web_app(
                 value = body.get("value")
                 if value is None:
                     return _json_response({"message": "Parameter 'value' is required."}, status=422)
-                bool_str = "true" if value else "false"
+                bool_val = str(value).lower() not in ("false", "0", "no")
+                bool_str = "true" if bool_val else "false"
                 result = await coordinator.async_change_configuration("FrontPanelLEDsEnabled", bool_str, charge_point_id=charge_point_id)
                 coordinator.record_portal_action("Enable Front Panel LED", bool_str, result, **_log_kwargs)
             elif command_id == "enable-local-control":
                 value = body.get("value")
                 if value is None:
                     return _json_response({"message": "Parameter 'value' is required."}, status=422)
-                bool_str = "true" if value else "false"
+                bool_val = str(value).lower() not in ("false", "0", "no")
+                bool_str = "true" if bool_val else "false"
                 result = await coordinator.async_change_configuration("EnableLocalModbus", bool_str, charge_point_id=charge_point_id)
                 coordinator.record_portal_action("Enable Local Control", bool_str, result, **_log_kwargs)
             elif command_id == "set-max-import-capacity":
@@ -2106,16 +2174,28 @@ def build_web_app(
         })
 
     async def user_api_list_meter_data(request: web.Request) -> web.Response:
+        # Numeric measurand IDs used by GivEnergy Cloud API → OCPP measurand strings
+        _MEASURAND_ID_MAP = {
+            "4": "Energy.Active.Import.Register",
+            "1": "Power.Active.Import",
+            "2": "Current.Import",
+            "3": "Voltage",
+        }
         principal = _require_api_key(request, auth_store)
         charge_point_id = request.match_info["uuid"]
         page = max(1, int(request.rel_url.query.get("page", 1)))
         per_page = 15
         start_time = request.rel_url.query.get("start_time") or None
         end_time = request.rel_url.query.get("end_time") or None
-        measurands_param = request.rel_url.query.get("measurands") or None
-        measurands = [m.strip() for m in measurands_param.split(",")] if measurands_param else None
-        meter_id_param = request.rel_url.query.get("meter_id")
-        meter_id = int(meter_id_param) if meter_id_param is not None and meter_id_param.isdigit() else None
+        # Support both ?measurands=X,Y and ?measurands[]=X&measurands[]=Y
+        measurands_list = request.rel_url.query.getall("measurands[]", [])
+        if not measurands_list:
+            measurands_param = request.rel_url.query.get("measurands") or None
+            measurands_list = [m.strip() for m in measurands_param.split(",")] if measurands_param else []
+        # Map numeric IDs to measurand strings
+        measurands = [_MEASURAND_ID_MAP.get(m, m) for m in measurands_list] if measurands_list else None
+        meter_id_param = request.rel_url.query.get("meter_id") or request.rel_url.query.get("meter_ids[]")
+        meter_id = int(meter_id_param) if meter_id_param is not None and str(meter_id_param).isdigit() else None
         readings, total = auth_store.list_meter_readings(
             principal["user_id"], charge_point_id,
             start_time=start_time, end_time=end_time,
@@ -2124,10 +2204,25 @@ def build_web_app(
         )
         if total == 0 and auth_store.get_charger_for_user(principal["user_id"], charge_point_id) is None:
             return _json_response({"message": "Charger not found."}, status=404)
+        # Group flat rows by timestamp+meter_id into GivEnergy-compatible shape:
+        # {"start_time": ..., "end_time": ..., "measurements": [{"measurand": ..., "value": ...}]}
+        from collections import OrderedDict
+        grouped: OrderedDict = OrderedDict()
+        for row in readings:
+            key = (row.get("timestamp"), row.get("meter_id"))
+            if key not in grouped:
+                grouped[key] = {"start_time": row.get("timestamp"), "end_time": row.get("timestamp"), "measurements": []}
+            grouped[key]["measurements"].append({
+                "measurand": row.get("measurand"),
+                "phase": row.get("phase"),
+                "unit": row.get("unit"),
+                "value": row.get("normalized_value"),
+            })
+        data = list(grouped.values())
         base = str(request.url.origin()) + f"/api/v1/ev-charger/{charge_point_id}/meter-data"
         last_page = max(1, -(-total // per_page))
         return _json_response({
-            "data": readings,
+            "data": data,
             "links": {
                 "first": f"{base}?page=1",
                 "last": f"{base}?page={last_page}",
@@ -2239,6 +2334,7 @@ def _require_api_key(request: web.Request, auth_store: AuthStore) -> dict:
 
 def _charger_to_api(charger: dict) -> dict:
     online = str(charger.get("connection_state") or "").lower() == "connected"
+    power_kw = charger.get("live_power_kw")
     return {
         "uuid": charger.get("charge_point_id"),
         "serial_number": charger.get("serial"),
@@ -2247,6 +2343,7 @@ def _charger_to_api(charger: dict) -> dict:
         "online": online,
         "went_offline_at": None if online else charger.get("went_offline_at"),
         "status": charger.get("status"),
+        "power_now": {"value": power_kw if power_kw is not None else 0},
     }
 
 
@@ -2355,6 +2452,7 @@ def _enrich_chargers_with_connection(
                 "connection_state": snapshot.get("connection_state"),
                 "status": snapshot.get("status"),
                 "last_seen": snapshot.get("last_seen"),
+                "live_power_kw": snapshot.get("live_power_kw"),
             })
         connection = connected.get(charge_point_id)
         if connection:
@@ -2495,6 +2593,62 @@ async def _dst_correction_task(coordinator: object, auth_store: object) -> None:
             logger.error("DST correction task failed: %s", exc)
 
 
+# ── Update checker ────────────────────────────────────────────────────────────
+
+_RUNNING_UNDER_HA = bool(os.environ.get("SUPERVISOR_TOKEN"))
+_GITHUB_RELEASES_URL = "https://api.github.com/repos/DJBenson/GivEVC-OCPPv2/releases"
+_UPDATE_CHECK_INTERVAL = 6 * 3600  # 6 hours
+
+# In-memory cache — populated by the background task
+_update_info: dict = {}
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    import re
+    return tuple(int(x) for x in re.findall(r"\d+", v))
+
+
+async def _update_check_task(auth_store: AuthStore) -> None:
+    global _update_info
+    while True:
+        try:
+            channel = auth_store.get_update_channel()
+            import aiohttp as _aiohttp
+            async with _aiohttp.ClientSession() as session:
+                async with session.get(
+                    _GITHUB_RELEASES_URL,
+                    headers={"Accept": "application/vnd.github+json"},
+                    timeout=_aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    releases = await resp.json()
+
+            candidates = [
+                r for r in releases
+                if not r.get("draft")
+                and (channel == "beta" or not r.get("prerelease"))
+            ]
+            if candidates:
+                latest = candidates[0]
+                tag = str(latest.get("tag_name", "")).lstrip("v")
+                current = APP_VERSION.lstrip("v")
+                is_newer = _parse_version(tag) > _parse_version(current)
+                _update_info = {
+                    "latest_version": tag,
+                    "is_prerelease": latest.get("prerelease", False),
+                    "update_available": is_newer,
+                    "release_url": latest.get("html_url", ""),
+                    "channel": channel,
+                    "checked_at": datetime.now(UTC).isoformat(),
+                }
+            else:
+                _update_info = {"update_available": False, "checked_at": datetime.now(UTC).isoformat()}
+        except Exception as exc:
+            _LOGGER.debug("Update check failed: %s", exc)
+            _update_info = {"update_available": False, "error": str(exc), "checked_at": datetime.now(UTC).isoformat()}
+
+        await asyncio.sleep(_UPDATE_CHECK_INTERVAL)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
@@ -2575,6 +2729,9 @@ async def main() -> None:
         await apply_demo_runtime(True)
 
     dst_task = asyncio.create_task(_dst_correction_task(coordinator, auth_store), name="dst-correction")
+    update_task = None
+    if not _RUNNING_UNDER_HA:
+        update_task = asyncio.create_task(_update_check_task(auth_store), name="update-check")
 
     try:
         await asyncio.Event().wait()
@@ -2584,6 +2741,12 @@ async def main() -> None:
             await dst_task
         except asyncio.CancelledError:
             pass
+        if update_task is not None:
+            update_task.cancel()
+            try:
+                await update_task
+            except asyncio.CancelledError:
+                pass
         await apply_demo_runtime(False)
         await ocpp_server.stop()
         await firmware.stop()

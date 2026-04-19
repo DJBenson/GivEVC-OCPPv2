@@ -34,6 +34,7 @@ DEMO_CHARGE_POINT_ID = "demo-charger-001"
 DEMO_DISPLAY_NAME = "Demo Charger"
 SYSTEM_SETTING_DEMO_MODE = "demo_mode_enabled"
 SYSTEM_SETTING_PUBLIC_API = "public_api_enabled"
+SYSTEM_SETTING_UPDATE_CHANNEL = "update_channel"
 PASSWORD_RESET_MINUTES = 15
 COORDINATOR_STATE_ID = "global"
 TOTP_ISSUER = "GivEVC Portal"
@@ -899,6 +900,15 @@ class AuthStore:
                 """,
                 (key, value, now),
             )
+
+    def get_update_channel(self) -> str:
+        val = self.get_system_setting(SYSTEM_SETTING_UPDATE_CHANNEL)
+        return val if val in ("stable", "beta") else "stable"
+
+    def set_update_channel(self, channel: str) -> None:
+        if channel not in ("stable", "beta"):
+            raise ValueError("channel must be 'stable' or 'beta'")
+        self.set_system_setting(SYSTEM_SETTING_UPDATE_CHANNEL, channel)
 
     def mark_user_email_verified(self, user_id: str) -> dict[str, Any]:
         now = _now()
