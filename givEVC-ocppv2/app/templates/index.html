@@ -3202,7 +3202,7 @@ async function createApiKey(event) {
     closeApiKeyCreateModal();
     showApiKeyCreatedModal(data.api_key || '—');
     renderApiKeys(data.keys || []);
-    set('api-key-status', 'API key created');
+    setTemp('api-key-status', 'API key created');
   } catch (err) {
     set('api-key-create-status', err.message || 'Could not create API key');
   } finally {
@@ -3222,7 +3222,7 @@ async function revokeApiKey(id) {
   try {
     const data = await apiJson(`/api/account/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
     renderApiKeys(data.keys || []);
-    set('api-key-status', 'API key removed');
+    setTemp('api-key-status', 'API key removed');
   } catch (err) {
     set('api-key-status', err.message || 'Could not remove API key');
   }
@@ -3552,7 +3552,7 @@ async function assignAdminCharger(event) {
       body: JSON.stringify(payload),
     });
     form.reset();
-    set('admin-charger-status', `Assigned to ${data.charger?.owner_email || payload.email}`);
+    setTemp('admin-charger-status', `Assigned to ${data.charger?.owner_email || payload.email}`);
     document.getElementById('admin-assign-panel')?.classList.add('hidden');
     _adminSelectedChargePointId = null;
     if (data.charger?.owner_email === _authState.user?.email) {
@@ -3668,7 +3668,7 @@ async function setAdminAccountDisabled(disabled) {
     });
     _adminUserTargets.state = data.user;
     renderAdminAccountPanel('state', data.user);
-    set('admin-state-status', disabled ? 'Account disabled' : 'Account enabled');
+    setTemp('admin-state-status', disabled ? 'Account disabled' : 'Account enabled');
   } catch (err) {
     set('admin-state-status', err.message || 'Could not update account');
   }
@@ -3692,7 +3692,7 @@ async function resetAdminAccount2fa() {
     });
     _adminUserTargets['2fa'] = data.user;
     renderAdminAccountPanel('2fa', data.user);
-    set('admin-2fa-status', '2FA reset');
+    setTemp('admin-2fa-status', '2FA reset');
   } catch (err) {
     set('admin-2fa-status', err.message || 'Could not reset 2FA');
   }
@@ -3709,7 +3709,7 @@ async function verifyAdminAccountEmail() {
     });
     _adminUserTargets.email = data.user;
     renderAdminAccountPanel('email', data.user);
-    set('admin-email-validation-status', 'Email verification marked complete');
+    setTemp('admin-email-validation-status', 'Email verification marked complete');
   } catch (err) {
     set('admin-email-validation-status', err.message || 'Could not mark email verification complete');
   }
@@ -3731,7 +3731,7 @@ async function deleteAdminAccount() {
     _adminUserTargets.delete = null;
     document.getElementById('admin-delete-email').value = '';
     renderAdminAccountPanel('delete', null);
-    set('admin-delete-status', `Account ${user.email} deleted`);
+    setTemp('admin-delete-status', `Account ${user.email} deleted`);
   } catch (err) {
     set('admin-delete-status', err.message || 'Could not delete account');
   }
@@ -3792,7 +3792,7 @@ async function setAdminRegistrationEnabled(enabled) {
       body: JSON.stringify({ registration_enabled: !!enabled }),
     });
     renderAdminEmailSettings(data.email_settings || {});
-    set('admin-registration-status', enabled ? 'Registration enabled' : 'Registration disabled');
+    setTemp('admin-registration-status', enabled ? 'Registration enabled' : 'Registration disabled');
   } catch (err) {
     if (toggle) toggle.checked = !enabled;
     set('admin-registration-status', err.message || 'Could not update registration setting');
@@ -3811,7 +3811,7 @@ async function setAdminEmailValidationEnabled(enabled) {
       body: JSON.stringify({ initial_email_validation_enabled: !!enabled }),
     });
     renderAdminEmailSettings(data.email_settings || {});
-    set('admin-email-validation-global-status', enabled ? 'Initial email validation enabled' : 'Initial email validation disabled');
+    setTemp('admin-email-validation-global-status', enabled ? 'Initial email validation enabled' : 'Initial email validation disabled');
   } catch (err) {
     if (toggle) toggle.checked = !enabled;
     set('admin-email-validation-global-status', err.message || 'Could not update email validation setting');
@@ -3830,7 +3830,7 @@ async function setAdminPublicApiEnabled(enabled) {
       body: JSON.stringify({ public_api_enabled: !!enabled }),
     });
     renderAdminEmailSettings(data.email_settings || {});
-    set('admin-public-api-status', enabled ? 'Public API enabled' : 'Public API disabled');
+    setTemp('admin-public-api-status', enabled ? 'Public API enabled' : 'Public API disabled');
   } catch (err) {
     if (toggle) toggle.checked = !enabled;
     set('admin-public-api-status', err.message || 'Could not update public API setting');
@@ -3849,7 +3849,7 @@ async function setAdminDemoEnabled(enabled) {
       body: JSON.stringify({ enabled: !!enabled }),
     });
     renderAdminDemoSettings(data || {});
-    set('admin-demo-status', enabled ? 'Demo mode enabled' : 'Demo mode disabled');
+    setTemp('admin-demo-status', enabled ? 'Demo mode enabled' : 'Demo mode disabled');
     await refreshAuthState();
   } catch (err) {
     if (toggle) toggle.checked = !enabled;
@@ -3868,7 +3868,7 @@ async function testAdminSmtp() {
       method: 'POST',
       body: '{}',
     });
-    set('admin-smtp-status', data.message || 'Test email sent');
+    setTemp('admin-smtp-status', data.message || 'Test email sent');
   } catch (err) {
     set('admin-smtp-status', err.message || 'SMTP test failed');
   } finally {
@@ -4025,7 +4025,7 @@ async function adminForceRepushSchedules() {
   try {
     const d = await apiJson('/api/admin/schedules/force-repush', { method: 'POST' });
     const msg = `Done: ${d.succeeded} pushed, ${d.failed} failed, ${d.offline_flagged} offline (will correct on reconnect)`;
-    if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; }
+    if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; clearStatusAfter(status); }
     loadAdminStats();
   } catch (err) {
     if (status) { status.textContent = err.message || 'Failed'; status.style.color = 'var(--err)'; }
@@ -4067,7 +4067,7 @@ async function adminPurgeOrphanedData() {
   try {
     const d = await apiJson('/api/admin/purge-orphaned-data', { method: 'POST' });
     const msg = `Purged: ${d.sessions} session(s), ${d.meter_readings} meter reading(s), ${d.snapshots} snapshot(s)`;
-    if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; }
+    if (status) { status.textContent = msg; status.style.color = 'var(--ok)'; clearStatusAfter(status); }
     loadAdminStats();
     loadOrphanedCounts();
   } catch (err) {
@@ -4359,6 +4359,19 @@ function formatSuspendMinutes(value) {
 function set(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
+}
+
+function setTemp(id, text, ms = 4000) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, ms);
+}
+
+function clearStatusAfter(el, ms = 4000) {
+  if (!el) return;
+  const captured = el.textContent;
+  setTimeout(() => { if (el.textContent === captured) { el.textContent = ''; el.style.color = ''; } }, ms);
 }
 
 function _setEnergyVal(id, value) {
