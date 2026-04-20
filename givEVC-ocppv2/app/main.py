@@ -314,30 +314,11 @@ def build_web_app(
         selected_charge_point_id = str(active.get("charge_point_id") or "")
         live_connection = _live_connection_for_charge_point(selected_charge_point_id)
         session_stats = auth_store.get_session_stats(selected_charge_point_id) if selected_charge_point_id else {}
-        coordinator_charge_point_id = str(coordinator.data.charge_point_id or "")
-        if selected_charge_point_id and selected_charge_point_id == coordinator_charge_point_id:
-            owner = auth_store.get_charger_by_charge_point_id(selected_charge_point_id)
-            if owner and owner.get("user_id") == user.id:
-                state = _state_to_dict(coordinator.data)
-                snapshot = coordinator.charger_snapshot_for(selected_charge_point_id)
-                if snapshot:
-                    in_memory_progress = state.get("firmware_transfer_progress")
-                    state.update(snapshot)
-                    if in_memory_progress is not None and snapshot.get("firmware_transfer_progress") is None:
-                        state["firmware_transfer_progress"] = in_memory_progress
-                state.update(_merge_live_session_into_stats(state, session_stats))
-                return _apply_live_connection_to_state(state, live_connection)
 
-        snapshot = coordinator.charger_snapshot_for(selected_charge_point_id)
-        if snapshot:
-            state = _state_to_dict(ChargerState())
-            state.update(snapshot)
-            state["charge_point_id"] = selected_charge_point_id
-            state.update(_merge_live_session_into_stats(state, session_stats))
-            return _apply_live_connection_to_state(state, live_connection)
-
-        state = _disconnected_state_for_charger(active)
-        state.update(session_stats)
+        charger_state = coordinator.state_for_charge_point(selected_charge_point_id)
+        state = _state_to_dict(charger_state)
+        state["charge_point_id"] = selected_charge_point_id
+        state.update(_merge_live_session_into_stats(state, session_stats))
         return _apply_live_connection_to_state(state, live_connection)
 
     def _owned_active_charger_error(request: web.Request) -> web.Response | None:
