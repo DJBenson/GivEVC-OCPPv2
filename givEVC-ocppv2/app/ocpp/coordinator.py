@@ -785,7 +785,6 @@ class OcppCoordinator:
         timestamp = _parse_ocpp_ts(payload.get("timestamp")) or datetime.now(UTC)
         state.transaction_id = tx_id
         state.transaction_active = _is_charging_status(state.status)
-        state.transaction_open = True
         state.plug_and_go_start_pending = False
         state.plug_and_go_last_error = None
         state.transaction_id_tag = payload.get("idTag")
