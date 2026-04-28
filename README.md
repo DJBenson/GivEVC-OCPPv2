@@ -7,6 +7,7 @@ A self-hosted OCPP 2.0 management portal for GivEnergy EV chargers. Provides a m
 ## Table of Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -38,6 +39,44 @@ A self-hosted OCPP 2.0 management portal for GivEnergy EV chargers. Provides a m
 - **Interactive API docs** — built-in Swagger UI at `/api/v1/docs`
 - **Admin backend** — user management, charger assignment, portal settings, statistics
 - **Demo mode** — simulated charger with seeded data for evaluation
+
+---
+
+## Screenshots
+
+### Desktop
+
+| Area | Screenshot |
+|------|------------|
+| Overview | ![Desktop overview dashboard](docs/screenshots/overview-desktop.png) |
+| Charging controls | ![Desktop charging controls](docs/screenshots/control-desktop.png) |
+| Charge modes | ![Desktop charge mode settings](docs/screenshots/modes-desktop.png) |
+| Charging schedule | ![Desktop charging schedule](docs/screenshots/schedule-desktop.png) |
+| RFID tags | ![Desktop RFID tag management](docs/screenshots/id-tags-desktop.png) |
+| Power statistics | ![Desktop power statistics](docs/screenshots/statistics-power-desktop.png) |
+| Energy statistics | ![Desktop energy statistics](docs/screenshots/statistics-energy-desktop.png) |
+| Activity logs | ![Desktop activity logs](docs/screenshots/logs-desktop.png) |
+| Error log | ![Desktop error log](docs/screenshots/errors-desktop.png) |
+| Charger account management | ![Desktop charger account management](docs/screenshots/account-chargers-desktop.png) |
+| Account security | ![Desktop account security](docs/screenshots/account-security-desktop.png) |
+| API keys | ![Desktop API key management](docs/screenshots/api-keys-desktop.png) |
+
+### Mobile
+
+| Area | Screenshot |
+|------|------------|
+| Overview | ![Mobile overview dashboard](docs/screenshots/overview-mobile.png) |
+| Charging controls | ![Mobile charging controls](docs/screenshots/control-mobile.png) |
+| Charge modes | ![Mobile charge mode settings](docs/screenshots/modes-mobile.png) |
+| Charging schedule | ![Mobile charging schedule](docs/screenshots/schedule-mobile.png) |
+| RFID tags | ![Mobile RFID tag management](docs/screenshots/id-tags-mobile.png) |
+| Power statistics | ![Mobile power statistics](docs/screenshots/statistics-power-mobile.png) |
+| Energy statistics | ![Mobile energy statistics](docs/screenshots/statistics-energy-mobile.png) |
+| Activity logs | ![Mobile activity logs](docs/screenshots/logs-mobile.png) |
+| Error log | ![Mobile error log](docs/screenshots/errors-mobile.png) |
+| Charger account management | ![Mobile charger account management](docs/screenshots/account-chargers-mobile.png) |
+| Account security | ![Mobile account security](docs/screenshots/account-security-mobile.png) |
+| API keys | ![Mobile API key management](docs/screenshots/api-keys-mobile.png) |
 
 ---
 

@@ -1,3 +1,4 @@
 /givEVC-ocppv2/app/ocpp/__pycache__
 /givEVC-ocppv2/app/__pycache__
 .env
+.DS_Store
