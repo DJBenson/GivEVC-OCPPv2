@@ -110,7 +110,10 @@ services:
       - "127.0.0.1:8099:8099" # Web UI — localhost only, put behind reverse proxy
     environment:
       TZ: "Europe/London"
+      PUBLIC_WEB_BASE_URL: "https://your-domain.com"
       PUBLIC_OCPP_BASE_URL: "wss://your-domain.com"
+      PUBLIC_FIRMWARE_HOST: "updates.your-domain.com"
+      PUBLIC_FIRMWARE_PORT: "9688"
       SMTP_HOST: "smtp.example.com"
       SMTP_PORT: "587"
       SMTP_USERNAME: "user@example.com"
@@ -139,6 +142,7 @@ All configuration is via environment variables.
 | `OCPP_PORT` | `7655` | OCPP WebSocket listen port |
 | `FIRMWARE_PORT` | `9688` | Firmware transfer server port |
 | `INGRESS_PORT` | `8099` | Web UI and API port |
+| `PUBLIC_WEB_BASE_URL` | _(auto)_ | Public web UI base URL used for password reset links, admin server details, public API pagination links, and secure cookie detection (e.g. `https://portal.example.com`). If unset, derived from reverse proxy headers. |
 | `PUBLIC_OCPP_BASE_URL` | _(auto)_ | Public OCPP base URL shown to users during onboarding (e.g. `wss://charger.example.com`). Detected from the request origin if not set. |
 | `PUBLIC_FIRMWARE_HOST` | _(auto)_ | Public hostname for firmware downloads |
 | `PUBLIC_FIRMWARE_PORT` | `9688` | Public port for firmware downloads |

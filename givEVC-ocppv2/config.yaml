@@ -27,6 +27,7 @@ map:
 options:
   ocpp_port: 7655
   firmware_port: 9688
+  public_web_base_url: ""
   public_ocpp_base_url: ""
   public_firmware_host: ""
   public_firmware_port: 9688
@@ -41,6 +42,7 @@ options:
 schema:
   ocpp_port: int
   firmware_port: int
+  public_web_base_url: str
   public_ocpp_base_url: str
   public_firmware_host: str
   public_firmware_port: int

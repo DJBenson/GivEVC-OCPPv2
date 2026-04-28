@@ -20,6 +20,7 @@ services:
       DEBUG_LOGGING: "${DEBUG_LOGGING:-false}"
       FIRMWARE_ROOT: "/data/firmware"
       FIRMWARE_MANIFEST_URL: "${FIRMWARE_MANIFEST_URL:-https://raw.githubusercontent.com/DJBenson/giv-firmware/refs/heads/main/Firmware/EVC/manifest.json}"
+      PUBLIC_WEB_BASE_URL: "${PUBLIC_WEB_BASE_URL:-}"
       PUBLIC_OCPP_BASE_URL: "${PUBLIC_OCPP_BASE_URL:-}"
       PUBLIC_FIRMWARE_HOST: "${PUBLIC_FIRMWARE_HOST:-}"
       PUBLIC_FIRMWARE_PORT: "${PUBLIC_FIRMWARE_PORT:-9688}"

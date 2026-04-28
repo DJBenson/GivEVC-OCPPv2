@@ -15,6 +15,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from aiohttp import http_exceptions, web
 
@@ -136,6 +137,7 @@ def _read_app_version() -> str:
 
 APP_VERSION = _read_app_version()
 FIRMWARE_MANIFEST_URL = _env_str("FIRMWARE_MANIFEST_URL", DEFAULT_FIRMWARE_MANIFEST_URL)
+PUBLIC_WEB_BASE_URL = os.environ.get("PUBLIC_WEB_BASE_URL") or None
 PUBLIC_OCPP_BASE_URL = os.environ.get("PUBLIC_OCPP_BASE_URL") or None
 PUBLIC_FIRMWARE_HOST = os.environ.get("PUBLIC_FIRMWARE_HOST") or None
 PUBLIC_FIRMWARE_PORT = _env_int("PUBLIC_FIRMWARE_PORT", FIRMWARE_PORT)
@@ -586,7 +588,7 @@ def build_web_app(
                 return smtp_error
             token = auth_store.create_password_reset_token(email)
             if token:
-                origin = str(request.url.origin())
+                origin = _public_web_origin(request)
                 reset_url = f"{origin}/?reset={token}"
                 await asyncio.get_running_loop().run_in_executor(
                     None, email_sender.send_password_reset, email.strip().lower(), reset_url
@@ -1011,7 +1013,7 @@ def build_web_app(
 
     async def api_admin_server_details(request: web.Request) -> web.Response:
         _require_admin(request)
-        portal_url = str(request.url.origin())
+        portal_url = _public_web_origin(request)
         ocpp_url = _ocpp_public_origin(request)
         # Parse host and port from the OCPP URL
         ocpp_parts = ocpp_url.rsplit(":", 1)
@@ -1598,7 +1600,7 @@ def build_web_app(
         start = (page - 1) * per_page
         page_items = enriched[start:start + per_page]
         data = [_charger_to_api(c) for c in page_items]
-        base = str(request.url.origin()) + "/api/v1/ev-charger"
+        base = _public_web_origin(request) + "/api/v1/ev-charger"
         last_page = max(1, -(-total // per_page))
         return _json_response({
             "data": data,
@@ -2196,7 +2198,7 @@ def build_web_app(
         )
         if total == 0 and auth_store.get_charger_for_user(principal["user_id"], charge_point_id) is None:
             return _json_response({"message": "Charger not found."}, status=404)
-        base = str(request.url.origin()) + f"/api/v1/ev-charger/{charge_point_id}/charging-sessions"
+        base = _public_web_origin(request) + f"/api/v1/ev-charger/{charge_point_id}/charging-sessions"
         last_page = max(1, -(-total // per_page))
         return _json_response({
             "data": sessions,
@@ -2260,7 +2262,7 @@ def build_web_app(
                 "value": row.get("normalized_value"),
             })
         data = list(grouped.values())
-        base = str(request.url.origin()) + f"/api/v1/ev-charger/{charge_point_id}/meter-data"
+        base = _public_web_origin(request) + f"/api/v1/ev-charger/{charge_point_id}/meter-data"
         last_page = max(1, -(-total // per_page))
         return _json_response({
             "data": data,
@@ -2442,15 +2444,51 @@ def _set_session_cookie(
     expires_at,
 ) -> None:
     del expires_at
+    public_scheme = _public_web_origin(request).split(":", 1)[0]
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
         max_age=14 * 24 * 60 * 60,
         httponly=True,
-        secure=request.secure,
+        secure=public_scheme == "https",
         samesite="Strict",
         path="/",
     )
+
+
+def _first_forwarded_value(value: str | None) -> str:
+    return str(value or "").split(",", 1)[0].strip()
+
+
+def _public_web_origin(request: web.Request) -> str:
+    if PUBLIC_WEB_BASE_URL:
+        return PUBLIC_WEB_BASE_URL.rstrip("/")
+
+    forwarded_proto = _first_forwarded_value(request.headers.get("X-Forwarded-Proto")).lower()
+    forwarded_host = _first_forwarded_value(request.headers.get("X-Forwarded-Host"))
+    forwarded_port = _first_forwarded_value(request.headers.get("X-Forwarded-Port"))
+
+    if forwarded_proto in {"http", "https"}:
+        scheme = forwarded_proto
+    else:
+        scheme = "https" if request.secure or request.scheme == "https" else "http"
+
+    raw_host = forwarded_host or request.headers.get("Host") or request.host or ""
+    host = str(raw_host).strip()
+    if "://" in host:
+        parsed = urlsplit(host)
+        host = parsed.netloc or parsed.path
+    if "," in host:
+        host = host.split(",", 1)[0].strip()
+
+    if forwarded_port and ":" not in host and forwarded_port.isdigit():
+        default_port = "443" if scheme == "https" else "80"
+        if forwarded_port != default_port:
+            host = f"{host}:{forwarded_port}"
+
+    if not host:
+        return str(request.url.origin())
+    return f"{scheme}://{host}"
 
 
 def _ocpp_public_origin(request: web.Request) -> str:

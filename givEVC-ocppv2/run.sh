@@ -77,6 +77,7 @@ migrate_legacy_data_dir() {
 
 export OCPP_PORT="${OCPP_PORT:-$(read_option ocpp_port 7655)}"
 export FIRMWARE_PORT="${FIRMWARE_PORT:-$(read_option firmware_port 9688)}"
+export PUBLIC_WEB_BASE_URL="${PUBLIC_WEB_BASE_URL:-$(read_option public_web_base_url "")}"
 export PUBLIC_OCPP_BASE_URL="${PUBLIC_OCPP_BASE_URL:-$(read_option public_ocpp_base_url "")}"
 export PUBLIC_FIRMWARE_HOST="${PUBLIC_FIRMWARE_HOST:-$(read_option public_firmware_host "")}"
 export PUBLIC_FIRMWARE_PORT="${PUBLIC_FIRMWARE_PORT:-$(read_option public_firmware_port "${FIRMWARE_PORT}")}"
@@ -100,6 +101,7 @@ else
 fi
 echo "  OCPP port     : ${OCPP_PORT}"
 echo "  Firmware port : ${FIRMWARE_PORT}"
+echo "  Web base URL  : ${PUBLIC_WEB_BASE_URL:-auto}"
 echo "  OCPP base URL : ${PUBLIC_OCPP_BASE_URL:-auto}"
 echo "  Firmware host : ${PUBLIC_FIRMWARE_HOST:-auto}"
 echo "  Public fw port: ${PUBLIC_FIRMWARE_PORT}"
