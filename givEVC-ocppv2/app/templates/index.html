@@ -642,6 +642,24 @@ body.modal-open { overflow: hidden; }
   border-radius: 7px; background: rgba(255,107,53,.12); color: var(--warn);
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
 }
+.coming-soon-wrap { position: relative; min-height: 300px; overflow: hidden; }
+.coming-soon-disabled { opacity: .36; pointer-events: none; user-select: none; }
+.coming-soon-overlay {
+  position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(244,246,249,.68); backdrop-filter: blur(1.5px);
+}
+.coming-soon-dialog {
+  width: min(420px, 100%); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 18px 60px rgba(0,0,0,.18);
+  padding: 22px; text-align: center;
+}
+.coming-soon-icon {
+  width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+  margin: 0 auto 14px; background: rgba(255,107,53,.12); color: var(--warn);
+  font-size: 22px; font-weight: 800;
+}
+.coming-soon-title { font-size: 18px; font-weight: 750; margin-bottom: 8px; }
+.coming-soon-message { color: var(--muted); font-size: 13px; line-height: 1.55; }
 
 .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
 .badge-ok { background: rgba(102,187,106,.15); color: #388e3c; }
@@ -792,6 +810,7 @@ canvas { width: 100% !important; display: block; }
   --teal-dk: #00bfa5;
 }
 .dark .data-table tbody tr:hover { background: rgba(255,255,255,.04); }
+.dark .coming-soon-overlay { background: rgba(17,19,24,.72); }
 
 
 /* ─── Hamburger ──────────────────────────────────── */
@@ -1620,45 +1639,57 @@ canvas { width: 100% !important; display: block; }
         <div class="card">
           <div class="card-header">
             <span class="card-title">Error Log</span>
+            <span class="dev-feature-note">Coming soon</span>
           </div>
-          <div class="card-body" style="padding:0 0 16px">
-          <div class="table-toolbar" style="padding:16px 20px 0">
-            <div class="search-wrap">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input class="search-input" type="text" placeholder="Search errors…">
+          <div class="card-body coming-soon-wrap" style="padding:0 0 16px">
+            <div class="coming-soon-disabled" aria-hidden="true">
+              <div class="table-toolbar" style="padding:16px 20px 0">
+                <div class="search-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input class="search-input" type="text" placeholder="Search errors..." disabled>
+                </div>
+              </div>
+              <div class="table-wrap" style="padding:0 4px">
+                <table class="data-table">
+                  <thead><tr><th>Timestamp</th><th>Serial</th><th>Error Code</th><th>Description</th><th>Cleared At</th></tr></thead>
+                  <tbody>
+                    <tr><td>2026-04-10 14:00:55</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 14:13:23</td></tr>
+                    <tr><td>2026-04-10 13:59:57</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:57</td></tr>
+                    <tr><td>2026-04-10 13:59:54</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:54</td></tr>
+                    <tr><td>2026-04-10 13:59:53</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:53</td></tr>
+                    <tr><td>2026-04-10 13:59:50</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:50</td></tr>
+                    <tr><td>2026-04-10 13:59:49</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:49</td></tr>
+                    <tr><td>2026-04-10 13:59:47</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:46</td></tr>
+                    <tr><td>2026-04-10 13:59:45</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:45</td></tr>
+                    <tr><td>2026-04-10 13:59:43</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:43</td></tr>
+                    <tr><td>2026-04-10 13:59:41</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:41</td></tr>
+                    <tr><td>2026-04-10 13:59:40</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:40</td></tr>
+                    <tr><td>2026-04-10 13:58:23</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:23</td></tr>
+                    <tr><td>2026-04-10 13:58:21</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:58:22</td></tr>
+                    <tr><td>2026-04-10 13:58:20</td><td>demo-charger-001</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:58:21</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:0 20px;flex-wrap:wrap;gap:8px">
+                <span style="font-size:12px;color:var(--muted)">1-15 of 35</span>
+                <div class="pagination">
+                  <button class="page-btn" disabled>&lt;</button>
+                  <button class="page-btn active">1</button>
+                  <button class="page-btn">2</button>
+                  <button class="page-btn">3</button>
+                  <button class="page-btn">&gt;</button>
+                </div>
+              </div>
             </div>
-          </div>
-          <div class="table-wrap" style="padding:0 4px">
-            <table class="data-table">
-              <thead><tr><th>Timestamp</th><th>Serial</th><th>Error Code</th><th>Description</th><th>Cleared At</th></tr></thead>
-              <tbody>
-                <tr><td>2026-04-10 14:00:55</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 14:13:23</td></tr>
-                <tr><td>2026-04-10 13:59:57</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:57</td></tr>
-                <tr><td>2026-04-10 13:59:54</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:54</td></tr>
-                <tr><td>2026-04-10 13:59:53</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:53</td></tr>
-                <tr><td>2026-04-10 13:59:50</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:50</td></tr>
-                <tr><td>2026-04-10 13:59:49</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:49</td></tr>
-                <tr><td>2026-04-10 13:59:47</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:46</td></tr>
-                <tr><td>2026-04-10 13:59:45</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:45</td></tr>
-                <tr><td>2026-04-10 13:59:43</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:43</td></tr>
-                <tr><td>2026-04-10 13:59:41</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:41</td></tr>
-                <tr><td>2026-04-10 13:59:40</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:40</td></tr>
-                <tr><td>2026-04-10 13:58:23</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:59:23</td></tr>
-                <tr><td>2026-04-10 13:58:21</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:58:22</td></tr>
-                <tr><td>2026-04-10 13:58:20</td><td>112888535545694</td><td><span class="badge badge-err">TamperDetection</span></td><td>Emergency stop button pressed</td><td>2026-04-10 13:58:21</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:0 20px;flex-wrap:wrap;gap:8px">
-            <span style="font-size:12px;color:var(--muted)">1–15 of 35</span>
-            <div class="pagination">
-              <button class="page-btn" disabled>‹</button>
-              <button class="page-btn active">1</button>
-              <button class="page-btn">2</button>
-              <button class="page-btn">3</button>
-              <button class="page-btn">›</button>
+            <div class="coming-soon-overlay" role="status" aria-live="polite">
+              <div class="coming-soon-dialog">
+                <div class="coming-soon-icon">!</div>
+                <div class="coming-soon-title">Error log coming soon</div>
+                <div class="coming-soon-message">
+                  Charger error history is not available yet. The sample rows behind this notice use the demo charger serial and show the planned layout for captured fault codes, descriptions, and clear times.
+                </div>
+              </div>
             </div>
-          </div>
           </div>
         </div>
       </div>
