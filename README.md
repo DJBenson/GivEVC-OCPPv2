@@ -1,6 +1,6 @@
 # GivEVC OCPPv2 Portal
 
-A self-hosted OCPP 2.0 management portal for GivEnergy EV chargers. Provides a multi-user web interface, a public REST API, real-time charger state via Server-Sent Events, scheduling with automatic DST correction, RFID tag management, firmware updates, and a full admin backend — all running as a single Docker container.
+A self-hosted OCPP 1.6J management portal for GivEnergy EV chargers. Provides a multi-user web interface, a public REST API, real-time charger state via Server-Sent Events, scheduling with automatic DST correction, RFID tag management, firmware updates, and a full admin backend — all running as a single Docker container.
 
 ## 💖 Support this project
 
